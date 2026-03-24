@@ -10,6 +10,7 @@ export interface Recording {
   id: string;
   case_id: string;
   filename: string;
+  transcription_filename: string | null;
   original_name: string;
   mime_type: string;
   size: number;

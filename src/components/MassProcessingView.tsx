@@ -97,7 +97,8 @@ export const MassProcessingView: React.FC<MassProcessingViewProps> = ({ mode, as
 
         // 2. Upload to AssemblyAI
         setFiles(prev => prev.map(f => f.id === fileObj.id ? { ...f, status: 'transcribing', progress: 30 } : f));
-        const fileBlobRes = await fetch(`/uploads/${uploadData.filename}`);
+        const fileToTranscribe = uploadData.transcriptionFilename || uploadData.filename;
+        const fileBlobRes = await fetch(`/uploads/${fileToTranscribe}`);
         const blob = await fileBlobRes.blob();
 
         const aaiUploadRes = await fetch('https://api.assemblyai.com/v2/upload', {

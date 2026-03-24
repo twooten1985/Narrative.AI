@@ -5,8 +5,25 @@ import multer from "multer";
 import Database from "better-sqlite3";
 import { v4 as uuidv4 } from "uuid";
 import fs from "fs";
+import ffmpeg from "fluent-ffmpeg";
+
+// In your Electron app, you would set this path
+// if (process.env.FFMPEG_PATH) {
+//   ffmpeg.setFfmpegPath(process.env.FFMPEG_PATH);
+// }
 
 const db = new Database("narrative.db");
+
+// Helper to extract audio from video
+const extractAudio = (inputPath: string, outputPath: string): Promise<void> => {
+  return new Promise((resolve, reject) => {
+    ffmpeg(inputPath)
+      .toFormat('mp3')
+      .on('end', () => resolve())
+      .on('error', (err) => reject(err))
+      .save(outputPath);
+  });
+};
 
 // Initialize Database
 db.exec(`
@@ -21,6 +38,7 @@ db.exec(`
     id TEXT PRIMARY KEY,
     case_id TEXT NOT NULL,
     filename TEXT NOT NULL,
+    transcription_filename TEXT,
     original_name TEXT NOT NULL,
     mime_type TEXT NOT NULL,
     size INTEGER NOT NULL,
@@ -89,25 +107,52 @@ async function startServer() {
     res.json({ ...caseData, recordings: recordings.map(parseRecording) });
   });
 
-  app.post("/api/cases/:id/recordings", upload.single("file"), (req: any, res) => {
+  app.post("/api/cases/:id/recordings", upload.single("file"), async (req: any, res) => {
     if (!req.file) return res.status(400).json({ error: "No file uploaded" });
     
     const id = uuidv4();
     const { id: caseId } = req.params;
-    const { filename, originalname, mimetype, size } = req.file;
+    const { filename, originalname, mimetype, size, path: filePath } = req.file;
+
+    let transcriptionFilename = filename;
+    if (mimetype.startsWith('video/')) {
+      const audioFilename = `${uuidv4()}.mp3`;
+      const audioPath = path.join("uploads", audioFilename);
+      try {
+        await extractAudio(filePath, audioPath);
+        transcriptionFilename = audioFilename;
+      } catch (err) {
+        console.error("Audio extraction failed:", err);
+        // Fallback to original video
+      }
+    }
 
     db.prepare(`
-      INSERT INTO recordings (id, case_id, filename, original_name, mime_type, size)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).run(id, caseId, filename, originalname, mimetype, size);
+      INSERT INTO recordings (id, case_id, filename, transcription_filename, original_name, mime_type, size)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(id, caseId, filename, transcriptionFilename, originalname, mimetype, size);
 
-    res.json({ id, filename, originalname, mimetype, size });
+    res.json({ id, filename, transcriptionFilename, originalname, mimetype, size });
   });
 
-  app.post("/api/upload", upload.single("file"), (req: any, res) => {
+  app.post("/api/upload", upload.single("file"), async (req: any, res) => {
     if (!req.file) return res.status(400).json({ error: "No file uploaded" });
-    const { filename, originalname, mimetype, size } = req.file;
-    res.json({ filename, originalname, mimetype, size });
+    const { filename, originalname, mimetype, size, path: filePath } = req.file;
+    
+    let transcriptionFilename = filename;
+    if (mimetype.startsWith('video/')) {
+      const audioFilename = `${uuidv4()}.mp3`;
+      const audioPath = path.join("uploads", audioFilename);
+      try {
+        await extractAudio(filePath, audioPath);
+        transcriptionFilename = audioFilename;
+      } catch (err) {
+        console.error("Audio extraction failed:", err);
+        // Fallback to original video
+      }
+    }
+    
+    res.json({ filename, transcriptionFilename, originalname, mimetype, size });
   });
 
   app.get("/api/recordings/:id", (req, res) => {

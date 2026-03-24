@@ -243,7 +243,8 @@ export default function App() {
       };
 
       // 1. Get the file from our server as a blob
-      const fileRes = await fetch(`/uploads/${selectedRecording.filename}`);
+      const fileToTranscribe = selectedRecording.transcription_filename || selectedRecording.filename;
+      const fileRes = await fetch(`/uploads/${fileToTranscribe}`);
       const blob = await fileRes.blob();
 
       // 2. Upload to AssemblyAI
