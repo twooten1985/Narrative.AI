@@ -1,0 +1,8 @@
+{
+  "name": "Narrative.AI",
+  "description": "A professional transcription and forensic analysis tool for law enforcement, featuring AssemblyAI integration, speaker labeling, and APOD (Analysis of Patterns of Denial) reporting.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
