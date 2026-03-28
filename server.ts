@@ -14,14 +14,35 @@ import ffmpeg from "fluent-ffmpeg";
 
 const db = new Database("narrative.db");
 
+// Ensure uploads directory exists
+const uploadDir = "uploads";
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir);
+}
+
 // Helper to extract audio from video
-const extractAudio = (inputPath: string, outputPath: string): Promise<void> => {
+const conversionJobs = new Map<string, number>();
+
+const extractAudio = (inputPath: string, outputPath: string, jobId?: string): Promise<void> => {
   return new Promise((resolve, reject) => {
-    ffmpeg(inputPath)
+    if (jobId) conversionJobs.set(jobId, 0);
+    let command = ffmpeg(inputPath)
       .toFormat('mp3')
-      .on('end', () => resolve())
-      .on('error', (err) => reject(err))
-      .save(outputPath);
+      .on('progress', (progress) => {
+        if (jobId && progress.percent) {
+          conversionJobs.set(jobId, Math.round(progress.percent));
+        }
+      })
+      .on('end', () => {
+        if (jobId) conversionJobs.set(jobId, 100);
+        resolve();
+      })
+      .on('error', (err) => {
+        if (jobId) conversionJobs.delete(jobId);
+        reject(err);
+      });
+    
+    command.save(outputPath);
   });
 };
 
@@ -92,6 +113,34 @@ async function startServer() {
     res.json(cases);
   });
 
+  app.get("/api/stats", (req, res) => {
+    try {
+      const totalCases = db.prepare("SELECT COUNT(*) as count FROM cases").get() as any;
+      const totalRecordings = db.prepare("SELECT COUNT(*) as count FROM recordings").get() as any;
+      const totalSize = db.prepare("SELECT SUM(size) as total FROM recordings").get() as any;
+      const mimeTypes = db.prepare("SELECT mime_type, COUNT(*) as count FROM recordings GROUP BY mime_type").all() as any[];
+      
+      const recentActivity = db.prepare(`
+        SELECT date(created_at) as date, COUNT(*) as count 
+        FROM recordings 
+        WHERE created_at > date('now', '-7 days')
+        GROUP BY date(created_at) 
+        ORDER BY date ASC
+      `).all() as any[];
+
+      res.json({
+        totalCases: totalCases.count,
+        totalRecordings: totalRecordings.count,
+        totalSize: totalSize.total || 0,
+        mimeTypes,
+        recentActivity
+      });
+    } catch (error) {
+      console.error("Stats fetch failed:", error);
+      res.status(500).json({ error: "Failed to fetch statistics" });
+    }
+  });
+
   app.post("/api/cases", (req, res) => {
     const { name, description } = req.body;
     const id = uuidv4();
@@ -115,16 +164,27 @@ async function startServer() {
     const { filename, originalname, mimetype, size, path: filePath } = req.file;
 
     let transcriptionFilename = filename;
-    if (mimetype.startsWith('video/')) {
+    const isVideo = mimetype.startsWith('video/');
+    const isWav = mimetype === 'audio/wav' || mimetype === 'audio/x-wav' || originalname.toLowerCase().endsWith('.wav');
+
+    if (isVideo || isWav) {
       const audioFilename = `${uuidv4()}.mp3`;
       const audioPath = path.join("uploads", audioFilename);
-      try {
-        await extractAudio(filePath, audioPath);
-        transcriptionFilename = audioFilename;
-      } catch (err) {
-        console.error("Audio extraction failed:", err);
-        // Fallback to original video
-      }
+      
+      // Start conversion in background
+      extractAudio(filePath, audioPath, id)
+        .then(() => {
+          db.prepare("UPDATE recordings SET transcription_filename = ? WHERE id = ?").run(audioFilename, id);
+        })
+        .catch(err => console.error("Background conversion failed:", err));
+      
+      // Return immediately so client can poll
+      db.prepare(`
+        INSERT INTO recordings (id, case_id, filename, transcription_filename, original_name, mime_type, size)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).run(id, caseId, filename, filename, originalname, mimetype, size);
+
+      return res.json({ id, filename, transcriptionFilename: filename, originalname, mimetype, size, status: 'converting' });
     }
 
     db.prepare(`
@@ -132,7 +192,40 @@ async function startServer() {
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `).run(id, caseId, filename, transcriptionFilename, originalname, mimetype, size);
 
-    res.json({ id, filename, transcriptionFilename, originalname, mimetype, size });
+    res.json({ id, filename, transcriptionFilename, originalname, mimetype, size, status: 'ready' });
+  });
+
+  app.post("/api/recordings/:id/convert", async (req, res) => {
+    const { id } = req.params;
+    const recording = db.prepare("SELECT * FROM recordings WHERE id = ?").get(id);
+    if (!recording) return res.status(404).json({ error: "Recording not found" });
+
+    const inputPath = path.join("uploads", recording.filename);
+    const audioFilename = `${uuidv4()}.mp3`;
+    const audioPath = path.join("uploads", audioFilename);
+
+    // Start conversion in background
+    extractAudio(inputPath, audioPath, id)
+      .then(() => {
+        db.prepare("UPDATE recordings SET transcription_filename = ? WHERE id = ?").run(audioFilename, id);
+      })
+      .catch(err => console.error("On-demand conversion failed:", err));
+
+    res.json({ success: true, jobId: id });
+  });
+
+  app.get("/api/recordings/:id/convert/progress", (req, res) => {
+    const { id } = req.params;
+    const progress = conversionJobs.get(id);
+    if (progress === undefined) {
+      // Check if it's already done
+      const recording = db.prepare("SELECT * FROM recordings WHERE id = ?").get(id);
+      if (recording && recording.transcription_filename !== recording.filename) {
+        return res.json({ progress: 100, status: 'completed' });
+      }
+      return res.status(404).json({ error: "Job not found" });
+    }
+    res.json({ progress, status: progress === 100 ? 'completed' : 'processing' });
   });
 
   app.post("/api/upload", upload.single("file"), async (req: any, res) => {
@@ -140,19 +233,31 @@ async function startServer() {
     const { filename, originalname, mimetype, size, path: filePath } = req.file;
     
     let transcriptionFilename = filename;
-    if (mimetype.startsWith('video/')) {
+    const isVideo = mimetype.startsWith('video/');
+    const isWav = mimetype === 'audio/wav' || mimetype === 'audio/x-wav' || originalname.toLowerCase().endsWith('.wav');
+
+    if (isVideo || isWav) {
       const audioFilename = `${uuidv4()}.mp3`;
       const audioPath = path.join("uploads", audioFilename);
-      try {
-        await extractAudio(filePath, audioPath);
-        transcriptionFilename = audioFilename;
-      } catch (err) {
-        console.error("Audio extraction failed:", err);
-        // Fallback to original video
-      }
+      const jobId = uuidv4();
+      
+      // Start conversion in background
+      extractAudio(filePath, audioPath, jobId)
+        .catch(err => console.error("Background upload conversion failed:", err));
+      
+      return res.json({ filename, transcriptionFilename: audioFilename, originalname, mimetype, size, status: 'converting', jobId });
     }
     
-    res.json({ filename, transcriptionFilename, originalname, mimetype, size });
+    res.json({ filename, transcriptionFilename, originalname, mimetype, size, status: 'ready' });
+  });
+
+  app.get("/api/jobs/:id/progress", (req, res) => {
+    const { id } = req.params;
+    const progress = conversionJobs.get(id);
+    if (progress === undefined) {
+      return res.status(404).json({ error: "Job not found" });
+    }
+    res.json({ progress, status: progress === 100 ? 'completed' : 'processing' });
   });
 
   app.get("/api/recordings/:id", (req, res) => {
@@ -200,12 +305,16 @@ async function startServer() {
 
   app.use("/uploads", express.static("uploads"));
 
-  // Error handler for Multer
+  // Error handler for Multer and general errors
   app.use((err: any, req: any, res: any, next: any) => {
+    console.error("Server Error:", err);
     if (err.code === "LIMIT_FILE_SIZE") {
       return res.status(413).json({ error: "File too large. Maximum size is 1GB." });
     }
-    next(err);
+    res.status(err.status || 500).json({ 
+      error: err.message || "Internal Server Error",
+      details: process.env.NODE_ENV !== 'production' ? err.stack : undefined
+    });
   });
 
   // Vite middleware for development

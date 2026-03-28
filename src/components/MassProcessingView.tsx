@@ -13,17 +13,20 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { generateSummary } from '../services/geminiService';
+import { runLemurTask, LEMUR_PROMPTS } from '../services/assemblyService';
 import { format } from 'date-fns';
 
 interface MassProcessingViewProps {
   mode: 'mass-jail-call' | 'mass-keyword-search';
   assemblyKey: string;
+  geminiKey: string;
+  preferAssemblySummary?: boolean;
 }
 
 interface ProcessedFile {
   id: string;
   name: string;
-  status: 'pending' | 'uploading' | 'transcribing' | 'summarizing' | 'completed' | 'error';
+  status: 'pending' | 'uploading' | 'converting' | 'transcribing' | 'summarizing' | 'completed' | 'error';
   progress: number;
   error?: string;
   summary?: string;
@@ -35,7 +38,7 @@ interface ProcessedFile {
   }[];
 }
 
-export const MassProcessingView: React.FC<MassProcessingViewProps> = ({ mode, assemblyKey }) => {
+export const MassProcessingView: React.FC<MassProcessingViewProps> = ({ mode, assemblyKey, geminiKey, preferAssemblySummary }) => {
   const [files, setFiles] = useState<ProcessedFile[]>([]);
   const [keywords, setKeywords] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
@@ -92,8 +95,46 @@ export const MassProcessingView: React.FC<MassProcessingViewProps> = ({ mode, as
           method: 'POST',
           body: formData
         });
+        
+        if (!uploadRes.ok) {
+          const text = await uploadRes.text();
+          let errorMsg = `Upload failed (${uploadRes.status})`;
+          try {
+            const json = JSON.parse(text);
+            errorMsg = json.error || errorMsg;
+          } catch (e) {
+            errorMsg = text.slice(0, 100);
+          }
+          throw new Error(errorMsg);
+        }
+        
         const uploadData = await uploadRes.json();
         if (!uploadRes.ok) throw new Error(uploadData.error || "Server upload failed");
+
+        if (uploadData.status === 'converting') {
+          setFiles(prev => prev.map(f => f.id === fileObj.id ? { ...f, status: 'converting', progress: 20 } : f));
+          
+          // Poll for conversion progress
+          let conversionDone = false;
+          while (!conversionDone) {
+            await new Promise(r => setTimeout(r, 1000));
+            const progressRes = await fetch(`/api/jobs/${uploadData.jobId}/progress`);
+            
+            if (!progressRes.ok) {
+              const text = await progressRes.text();
+              throw new Error(`Conversion polling failed: ${text.slice(0, 50)}`);
+            }
+            
+            const progressData = await progressRes.json();
+            const progressValue = Number(progressData.progress) || 0;
+            
+            setFiles(prev => prev.map(f => f.id === fileObj.id ? { ...f, progress: 15 + (progressValue * 0.1) } : f));
+            
+            if (progressData.status === 'completed') {
+              conversionDone = true;
+            }
+          }
+        }
 
         // 2. Upload to AssemblyAI
         setFiles(prev => prev.map(f => f.id === fileObj.id ? { ...f, status: 'transcribing', progress: 30 } : f));
@@ -119,7 +160,8 @@ export const MassProcessingView: React.FC<MassProcessingViewProps> = ({ mode, as
           },
           body: JSON.stringify({
             audio_url: aaiUploadData.upload_url,
-            word_boost: mode === 'mass-keyword-search' ? keywordsList : undefined
+            word_boost: mode === 'mass-keyword-search' ? keywordsList : undefined,
+            speaker_labels: true
           })
         });
         let transcriptData = await transcriptRes.json();
@@ -148,8 +190,30 @@ export const MassProcessingView: React.FC<MassProcessingViewProps> = ({ mode, as
         // 5. Process results
         if (mode === 'mass-jail-call') {
           setFiles(prev => prev.map(f => f.id === fileObj.id ? { ...f, status: 'summarizing', progress: 90 } : f));
-          const summary = await generateSummary(transcriptData.text, "Jail Phone Calls");
-          setFiles(prev => prev.map(f => f.id === fileObj.id ? { ...f, status: 'completed', progress: 100, summary } : f));
+          try {
+            let summary = null;
+            
+            if (preferAssemblySummary) {
+              const lemurPrompt = LEMUR_PROMPTS["Jail Phone Calls"];
+              try {
+                summary = await runLemurTask(assemblyKey, transcriptData.id, lemurPrompt);
+              } catch (e) {
+                console.warn("LeMUR summary failed, falling back to Gemini if available.");
+              }
+            }
+            
+            if (!summary && !preferAssemblySummary) {
+              try {
+                summary = await generateSummary(transcriptData.text, "Jail Phone Calls", geminiKey);
+              } catch (e) {
+                console.warn("Gemini summary failed, using transcript only.");
+              }
+            }
+            setFiles(prev => prev.map(f => f.id === fileObj.id ? { ...f, status: 'completed', progress: 100, summary: summary || "Transcription completed." } : f));
+          } catch (summaryError) {
+            console.error("Summary generation failed:", summaryError);
+            setFiles(prev => prev.map(f => f.id === fileObj.id ? { ...f, status: 'completed', progress: 100, summary: "Transcript completed, but summary generation failed." } : f));
+          }
         } else {
           setFiles(prev => prev.map(f => f.id === fileObj.id ? { ...f, status: 'summarizing', progress: 90 } : f));
           const results: any[] = [];
@@ -175,7 +239,7 @@ export const MassProcessingView: React.FC<MassProcessingViewProps> = ({ mode, as
         }
 
       } catch (error: any) {
-        console.error(`Error processing ${fileObj.name}:`, error);
+        console.error(`Error processing ${fileObj.name}:`, error.message || error);
         setFiles(prev => prev.map(f => f.id === fileObj.id ? { ...f, status: 'error', progress: 100, error: error.message } : f));
       }
     }

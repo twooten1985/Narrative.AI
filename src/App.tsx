@@ -20,7 +20,9 @@ import {
   Trash2,
   HelpCircle,
   ExternalLink,
-  Download
+  Download,
+  AlertCircle,
+  Search
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { format } from 'date-fns';
@@ -30,9 +32,69 @@ import { saveAs } from 'file-saver';
 import { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType } from 'docx';
 import { Case, Recording, TranscriptData, Utterance, Word, ApodResult } from './types';
 import { generateSummary, runApodAnalysis, INTERVIEW_PROMPTS } from './services/geminiService';
+import { runLemurTask, LEMUR_PROMPTS } from './services/assemblyService';
 import { MassProcessingView } from './components/MassProcessingView';
+import { StatsView } from './components/StatsView';
+
+class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean, error: Error | null }> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+    console.error("Uncaught error:", error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="min-h-screen bg-[#0F1115] flex items-center justify-center p-6">
+          <div className="max-w-md w-full bg-white/5 border border-white/10 rounded-3xl p-8 text-center space-y-6">
+            <div className="w-16 h-16 bg-red-500/10 rounded-2xl flex items-center justify-center mx-auto">
+              <AlertCircle size={32} className="text-red-500" />
+            </div>
+            <div className="space-y-2">
+              <h2 className="text-xl font-bold text-white">Something went wrong</h2>
+              <p className="text-sm text-white/40">
+                The application encountered an unexpected error. Please try refreshing the page.
+              </p>
+            </div>
+            {this.state.error && (
+              <div className="p-4 bg-black/40 rounded-xl text-left overflow-auto max-h-40">
+                <code className="text-xs text-red-400 font-mono break-all">
+                  {this.state.error.message}
+                </code>
+              </div>
+            )}
+            <button 
+              onClick={() => window.location.reload()}
+              className="w-full py-3 bg-white text-black rounded-xl font-bold hover:bg-white/90 transition-colors"
+            >
+              Refresh Application
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
+}
 
 export default function App() {
+  return (
+    <ErrorBoundary>
+      <AppContent />
+    </ErrorBoundary>
+  );
+}
+
+function AppContent() {
   const [cases, setCases] = useState<Case[]>([]);
   const [selectedCase, setSelectedCase] = useState<Case | null>(null);
   const [selectedRecording, setSelectedRecording] = useState<Recording | null>(null);
@@ -45,20 +107,116 @@ export default function App() {
   const [processingProgress, setProcessingProgress] = useState(0);
   const [processingStatus, setProcessingStatus] = useState('');
   const [assemblyKey, setAssemblyKey] = useState(localStorage.getItem('assembly_ai_key') || '');
+  const [geminiKey, setGeminiKey] = useState(localStorage.getItem('gemini_api_key') || '');
+  const [preferAssemblySummary, setPreferAssemblySummary] = useState(localStorage.getItem('prefer_assembly_summary') === 'true');
   const [currentTime, setCurrentTime] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [speakerLabels, setSpeakerLabels] = useState<Record<string, string>>({});
   const [interviewType, setInterviewType] = useState<string>("Suspect Interview");
 
+  const [mediaError, setMediaError] = useState<string | null>(null);
+  const [useAudioFallback, setUseAudioFallback] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isDeletingCase, setIsDeletingCase] = useState(false);
   const [isHelpOpen, setIsHelpOpen] = useState(false);
   const [tempAssemblyKey, setTempAssemblyKey] = useState(assemblyKey);
+  const [tempGeminiKey, setTempGeminiKey] = useState(geminiKey);
+  const [tempPreferAssembly, setTempPreferAssembly] = useState(preferAssemblySummary);
   const [topHeight, setTopHeight] = useState(400);
   const [isResizing, setIsResizing] = useState(false);
-  const [mode, setMode] = useState<'cases' | 'mass-jail-call' | 'mass-keyword-search'>('cases');
+  const [mode, setMode] = useState<'cases' | 'mass-jail-call' | 'mass-keyword-search' | 'statistics'>('cases');
+  const [isConverting, setIsConverting] = useState(false);
+  const [conversionProgress, setConversionProgress] = useState(0);
+  const [searchQuery, setSearchQuery] = useState('');
 
   const mediaRef = useRef<HTMLMediaElement>(null);
+
+  const highlightText = (text: string, query: string) => {
+    if (!query.trim()) return text;
+    const regex = new RegExp(`(${query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
+    const parts = text.split(regex);
+    return (
+      <>
+        {parts.map((part, i) => 
+          part.toLowerCase() === query.toLowerCase() ? (
+            <mark key={i} className="bg-orange-500 text-white rounded-sm px-0.5">{part}</mark>
+          ) : (
+            part
+          )
+        )}
+      </>
+    );
+  };
+
+  useEffect(() => {
+    setMediaError(null);
+    setUseAudioFallback(false);
+  }, [selectedRecording]);
+
+  const handleMediaError = (e: React.SyntheticEvent<HTMLMediaElement, Event>) => {
+    const target = e.currentTarget;
+    const error = target.error;
+    let message = "Unknown media error";
+    
+    if (error) {
+      switch (error.code) {
+        case 1: message = "Fetching process aborted by user"; break;
+        case 2: message = "Network error"; break;
+        case 3: message = "Decoding error"; break;
+        case 4: message = "Source not supported"; break;
+      }
+    }
+
+    console.error(`Media error (${target.tagName}): ${message}`, error?.code);
+    setMediaError(message);
+
+    // If it's a video or wav and we have a transcription (audio) file, try falling back to it
+    const isVideo = selectedRecording?.mime_type.startsWith('video');
+    const isWav = selectedRecording?.mime_type.includes('wav') || selectedRecording?.filename.toLowerCase().endsWith('.wav');
+    
+    if ((isVideo || isWav) && selectedRecording?.transcription_filename && !useAudioFallback) {
+      console.log("Attempting audio fallback for media...");
+      setUseAudioFallback(true);
+      setMediaError(null); // Clear error for the fallback attempt
+    } else if ((isVideo || isWav) && !isConverting) {
+      // If we don't have a transcription file yet, offer to convert it
+      // Or just start it automatically
+      handleStartConversion();
+    }
+  };
+
+  const handleStartConversion = async () => {
+    if (!selectedRecording) return;
+    setIsConverting(true);
+    setConversionProgress(0);
+    try {
+      await fetch(`/api/recordings/${selectedRecording.id}/convert`, { method: 'POST' });
+      
+      // Poll for progress
+      const poll = setInterval(async () => {
+        try {
+          const res = await fetch(`/api/recordings/${selectedRecording.id}/convert/progress`);
+          const data = await res.json();
+          setConversionProgress(Number(data.progress) || 0);
+          if (data.status === 'completed') {
+            clearInterval(poll);
+            setIsConverting(false);
+            setMediaError(null);
+            // Refresh case details to get the new transcription_filename
+            await fetchCaseDetails(selectedCase!.id);
+            const updatedRec = await safeFetch(`/api/recordings/${selectedRecording.id}`);
+            setSelectedRecording(updatedRec);
+          }
+        } catch (e) {
+          clearInterval(poll);
+          setIsConverting(false);
+        }
+      }, 1000);
+    } catch (error) {
+      console.error("Conversion failed:", error);
+      setIsConverting(false);
+    }
+  };
 
   useEffect(() => {
     fetchCases();
@@ -66,7 +224,9 @@ export default function App() {
 
   useEffect(() => {
     setTempAssemblyKey(assemblyKey);
-  }, [assemblyKey]);
+    setTempGeminiKey(geminiKey);
+    setTempPreferAssembly(preferAssemblySummary);
+  }, [assemblyKey, geminiKey, preferAssemblySummary]);
 
   useEffect(() => {
     if (selectedRecording?.speaker_labels) {
@@ -78,7 +238,11 @@ export default function App() {
 
   const handleSaveSettings = () => {
     setAssemblyKey(tempAssemblyKey);
+    setGeminiKey(tempGeminiKey);
+    setPreferAssemblySummary(tempPreferAssembly);
     localStorage.setItem('assembly_ai_key', tempAssemblyKey);
+    localStorage.setItem('gemini_api_key', tempGeminiKey);
+    localStorage.setItem('prefer_assembly_summary', tempPreferAssembly.toString());
     setIsSettingsOpen(false);
   };
 
@@ -105,8 +269,19 @@ export default function App() {
     const res = await fetch(url, options);
     const contentType = res.headers.get("content-type");
     if (!res.ok) {
-      const text = await res.text();
-      throw new Error(`Server error (${res.status}): ${text.slice(0, 100)}`);
+      let errorMessage = `Server error (${res.status})`;
+      try {
+        const text = await res.text();
+        if (text.startsWith('{')) {
+          const json = JSON.parse(text);
+          errorMessage = json.error || errorMessage;
+        } else {
+          errorMessage = text.slice(0, 100);
+        }
+      } catch (e) {
+        // Fallback to default message
+      }
+      throw new Error(errorMessage);
     }
     if (contentType && contentType.includes("application/json")) {
       return res.json();
@@ -174,11 +349,54 @@ export default function App() {
     formData.append('file', acceptedFiles[0]);
 
     try {
-      await safeFetch(`/api/cases/${selectedCase.id}/recordings`, {
+      const res = await fetch(`/api/cases/${selectedCase.id}/recordings`, {
         method: 'POST',
         body: formData,
       });
-      await fetchCaseDetails(selectedCase.id);
+      
+      if (!res.ok) {
+        const text = await res.text();
+        let errorMsg = `Upload failed (${res.status})`;
+        try {
+          const json = JSON.parse(text);
+          errorMsg = json.error || errorMsg;
+        } catch (e) {
+          errorMsg = text.slice(0, 100);
+        }
+        throw new Error(errorMsg);
+      }
+      
+      const data = await res.json();
+      
+      if (data.status === 'converting') {
+        setIsConverting(true);
+        setConversionProgress(0);
+        
+        // Poll for progress
+        const poll = setInterval(async () => {
+          try {
+            const progressRes = await fetch(`/api/recordings/${data.id}/convert/progress`);
+            if (!progressRes.ok) {
+              const text = await progressRes.text();
+              throw new Error(`Progress check failed: ${text.slice(0, 50)}`);
+            }
+            const progressData = await progressRes.json();
+            setConversionProgress(Number(progressData.progress) || 0);
+            if (progressData.status === 'completed') {
+              clearInterval(poll);
+              setIsConverting(false);
+              await fetchCaseDetails(selectedCase.id);
+            }
+          } catch (e) {
+            console.error("Polling error:", e);
+            clearInterval(poll);
+            setIsConverting(false);
+            alert("Conversion failed. Check server logs.");
+          }
+        }, 1000);
+      } else {
+        await fetchCaseDetails(selectedCase.id);
+      }
     } catch (error) {
       console.error("Upload failed:", error);
       alert("Upload failed. Check server logs.");
@@ -302,17 +520,45 @@ export default function App() {
         });
         
         // 6. Generate Summary and APOD
-        const summary = await generateSummary(transcriptData.text, interviewType);
-        let apod = null;
-        if (interviewType === "Child Harm Suspect Interview") {
-          apod = await runApodAnalysis(transcriptData.text);
-        }
+        try {
+          let summary = null;
+          
+          if (preferAssemblySummary) {
+            setProcessingStatus('Running LeMUR Analysis...');
+            const lemurPrompt = LEMUR_PROMPTS[interviewType as keyof typeof LEMUR_PROMPTS] || LEMUR_PROMPTS["Suspect Interview"];
+            try {
+              summary = await runLemurTask(assemblyKey, transcriptData.id, lemurPrompt);
+            } catch (e) {
+              console.warn("LeMUR summary failed, falling back to Gemini if available.");
+            }
+          }
+          
+          // Only fallback to Gemini if not explicitly preferring AssemblyAI or if AssemblyAI failed
+          if (!summary && !preferAssemblySummary) {
+            try {
+              summary = await generateSummary(transcriptData.text, interviewType, geminiKey);
+            } catch (e) {
+              console.warn("Gemini summary failed, but transcript is available.");
+            }
+          }
 
-        await safeFetch(`/api/recordings/${selectedRecording.id}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ summary, apod_results: apod }),
-        });
+          let apod = null;
+          if (interviewType === "Child Harm Suspect Interview") {
+            try {
+              apod = await runApodAnalysis(transcriptData.text, geminiKey);
+            } catch (e) {
+              console.warn("APOD analysis failed (Gemini required).");
+            }
+          }
+
+          await safeFetch(`/api/recordings/${selectedRecording.id}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ summary, apod_results: apod }),
+          });
+        } catch (summaryError: any) {
+          console.error("Analysis saving failed:", summaryError);
+        }
         
         setProcessingProgress(100);
         setProcessingStatus('Complete');
@@ -475,7 +721,7 @@ export default function App() {
   };
 
   const seekTo = (time: number) => {
-    if (mediaRef.current) {
+    if (mediaRef.current && isFinite(time)) {
       mediaRef.current.currentTime = time;
       mediaRef.current.play();
       setIsPlaying(true);
@@ -498,6 +744,11 @@ export default function App() {
   const isWordActive = (word: Word) => {
     const timeMs = currentTime * 1000;
     return timeMs >= word.start && timeMs <= word.end;
+  };
+
+  const isWordHighlighted = (wordText: string) => {
+    if (!searchQuery.trim()) return false;
+    return wordText.toLowerCase().includes(searchQuery.toLowerCase());
   };
 
   return (
@@ -563,6 +814,17 @@ export default function App() {
 
         <div className="p-4 border-t border-white/10 space-y-2">
           <span className="text-[10px] font-bold uppercase tracking-widest text-white/30 px-2">Mass Tools</span>
+          <button 
+            onClick={() => {
+              setMode('statistics');
+              setSelectedCase(null);
+              setSelectedRecording(null);
+            }}
+            className={`w-full flex items-center gap-3 p-3 rounded-xl transition-all ${mode === 'statistics' ? 'bg-orange-500/10 text-orange-500' : 'hover:bg-white/5 text-white/60'}`}
+          >
+            <BarChart3 size={18} className={mode === 'statistics' ? 'text-orange-500' : 'text-white/40'} />
+            <span className="text-sm font-medium">Statistics</span>
+          </button>
           <button 
             onClick={() => {
               setMode('mass-jail-call');
@@ -635,23 +897,23 @@ export default function App() {
 
                 <div className="space-y-8">
                   <section className="space-y-4">
-                    <h4 className="text-sm font-bold uppercase tracking-widest text-orange-500">1. Setup AssemblyAI</h4>
+                    <h4 className="text-sm font-bold uppercase tracking-widest text-orange-500">1. Setup API Keys</h4>
                     <div className="bg-black/20 rounded-2xl p-4 border border-white/5 space-y-3">
                       <p className="text-sm text-white/70 leading-relaxed">
-                        Narrative.AI uses AssemblyAI for high-accuracy transcription and speaker identification.
+                        Narrative.AI uses AssemblyAI for transcription and Gemini for advanced analysis.
                       </p>
                       <ul className="space-y-2">
                         <li className="flex items-start gap-2 text-xs text-white/50">
                           <div className="w-1.5 h-1.5 rounded-full bg-orange-500 mt-1 flex-shrink-0" />
-                          <span>Go to <a href="https://www.assemblyai.com" target="_blank" rel="noopener noreferrer" className="text-orange-500 hover:underline inline-flex items-center gap-1">assemblyai.com <ExternalLink size={10} /></a> and create a free account.</span>
+                          <span><span className="text-white">AssemblyAI (Required):</span> Go to <a href="https://www.assemblyai.com" target="_blank" rel="noopener noreferrer" className="text-orange-500 hover:underline inline-flex items-center gap-1">assemblyai.com <ExternalLink size={10} /></a> to get your key for transcription.</span>
                         </li>
                         <li className="flex items-start gap-2 text-xs text-white/50">
                           <div className="w-1.5 h-1.5 rounded-full bg-orange-500 mt-1 flex-shrink-0" />
-                          <span>Copy your <span className="text-white">API Key</span> from the dashboard.</span>
+                          <span><span className="text-white">Gemini (Optional):</span> Go to <a href="https://aistudio.google.com" target="_blank" rel="noopener noreferrer" className="text-orange-500 hover:underline inline-flex items-center gap-1">AI Studio <ExternalLink size={10} /></a> to get your key for advanced forensic analysis (APOD).</span>
                         </li>
                         <li className="flex items-start gap-2 text-xs text-white/50">
                           <div className="w-1.5 h-1.5 rounded-full bg-orange-500 mt-1 flex-shrink-0" />
-                          <span>Click <span className="text-white">Settings</span> in the sidebar here and paste your key.</span>
+                          <span>Click <span className="text-white">Settings</span> in the sidebar and paste your keys.</span>
                         </li>
                       </ul>
                     </div>
@@ -732,7 +994,7 @@ export default function App() {
 
                 <div className="space-y-6">
                   <div className="space-y-2">
-                    <label className="text-[10px] font-bold uppercase tracking-widest text-white/40 px-1">AssemblyAI API Key</label>
+                    <label className="text-[10px] font-bold uppercase tracking-widest text-white/40 px-1">AssemblyAI API Key (Required)</label>
                     <div className="relative">
                       <input 
                         type="password"
@@ -743,8 +1005,37 @@ export default function App() {
                       />
                     </div>
                     <p className="text-[10px] text-white/30 px-1">
-                      Required for transcription and speaker labeling. Get one at <a href="https://www.assemblyai.com" target="_blank" rel="noopener noreferrer" className="text-orange-500 hover:underline">assemblyai.com</a>
+                      Required for transcription. Get one at <a href="https://www.assemblyai.com" target="_blank" rel="noopener noreferrer" className="text-orange-500 hover:underline">assemblyai.com</a>
                     </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-bold uppercase tracking-widest text-white/40 px-1">Gemini API Key (Optional)</label>
+                    <div className="relative">
+                      <input 
+                        type="password"
+                        value={tempGeminiKey}
+                        onChange={e => setTempGeminiKey(e.target.value)}
+                        placeholder="Enter your Gemini API key"
+                        className="w-full bg-black/20 border border-white/10 rounded-xl px-4 py-3 text-sm focus:border-orange-500 transition-colors outline-none"
+                      />
+                    </div>
+                    <p className="text-[10px] text-white/30 px-1">
+                      Used for advanced forensic analysis (APOD). Get one at <a href="https://aistudio.google.com" target="_blank" rel="noopener noreferrer" className="text-orange-500 hover:underline">AI Studio</a>
+                    </p>
+                  </div>
+
+                  <div className="flex items-center justify-between p-4 bg-black/20 border border-white/10 rounded-xl">
+                    <div>
+                      <p className="text-sm font-bold">Strictly Use AssemblyAI Summaries</p>
+                      <p className="text-[10px] text-white/40">Disable Gemini fallback to avoid safety filter refusals on sensitive material.</p>
+                    </div>
+                    <button 
+                      onClick={() => setTempPreferAssembly(!tempPreferAssembly)}
+                      className={`w-12 h-6 rounded-full transition-all relative ${tempPreferAssembly ? 'bg-orange-500' : 'bg-white/10'}`}
+                    >
+                      <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${tempPreferAssembly ? 'left-7' : 'left-1'}`} />
+                    </button>
                   </div>
                 </div>
 
@@ -822,8 +1113,23 @@ export default function App() {
 
       {/* Main Content */}
       <div className="flex-1 flex flex-col min-w-0">
-        {mode !== 'cases' ? (
-          <MassProcessingView mode={mode as any} assemblyKey={assemblyKey} />
+        {mode === 'statistics' ? (
+          <div className="flex-1 flex flex-col p-8 overflow-y-auto">
+            <div className="max-w-5xl mx-auto w-full space-y-8">
+              <div className="flex items-center gap-3 mb-2">
+                <div className="w-10 h-10 bg-orange-500/10 rounded-xl flex items-center justify-center">
+                  <BarChart3 size={20} className="text-orange-500" />
+                </div>
+                <div>
+                  <h2 className="text-2xl font-bold tracking-tight">Usage Statistics</h2>
+                  <p className="text-sm text-white/40">Real-time insights into your case management and transcription activity</p>
+                </div>
+              </div>
+              <StatsView />
+            </div>
+          </div>
+        ) : mode !== 'cases' ? (
+          <MassProcessingView mode={mode as any} assemblyKey={assemblyKey} geminiKey={geminiKey} preferAssemblySummary={preferAssemblySummary} />
         ) : !selectedCase ? (
           <div className="flex-1 flex flex-col items-center justify-center opacity-20">
             <FolderOpen size={64} strokeWidth={1} />
@@ -893,27 +1199,45 @@ export default function App() {
                       className="bg-black/20 border-b border-white/10 overflow-hidden flex flex-col"
                       style={{ height: `${topHeight}px` }}
                     >
-                      <div className="flex-1 p-6 flex items-center justify-center">
-                        <div className="w-full max-w-3xl h-full">
-                          <div className="w-full h-full bg-black rounded-2xl overflow-hidden relative group border border-white/5 shadow-2xl">
-                            {selectedRecording.mime_type.startsWith('video') ? (
+                      <div className="flex-1 p-4 md:p-6 flex items-center justify-center min-h-0">
+                        <div className="w-full h-full flex items-center justify-center">
+                          <div className="relative w-full h-full max-w-full max-h-full bg-black rounded-2xl overflow-hidden group border border-white/5 shadow-2xl flex items-center justify-center">
+                            {selectedRecording.mime_type.startsWith('video') && !useAudioFallback ? (
                               <video 
+                                key={selectedRecording.id}
                                 ref={mediaRef as any}
                                 src={`/uploads/${selectedRecording.filename}`}
-                                className="w-full h-full object-contain"
+                                className="max-w-full max-h-full w-auto h-auto object-contain"
                                 onTimeUpdate={handleTimeUpdate}
                                 onPlay={() => setIsPlaying(true)}
                                 onPause={() => setIsPlaying(false)}
+                                onError={handleMediaError}
                               />
                             ) : (
-                              <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-orange-500/10 to-blue-500/10">
-                                <FileAudio size={64} className="text-orange-500/40 animate-pulse" />
+                              <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-orange-500/10 to-blue-500/10 relative">
+                                {mediaError && !useAudioFallback && (
+                                  <div className="absolute inset-0 flex items-center justify-center bg-black/60 z-10 p-6 text-center">
+                                    <div className="space-y-2">
+                                      <AlertCircle className="mx-auto text-red-500" size={32} />
+                                      <p className="text-sm font-medium text-white">{mediaError}</p>
+                                      <p className="text-xs text-white/40">The file format might not be supported by your browser.</p>
+                                    </div>
+                                  </div>
+                                )}
+                                <div className="flex flex-col items-center gap-4">
+                                  <FileAudio size={64} className="text-orange-500/40 animate-pulse" />
+                                  {useAudioFallback && (
+                                    <span className="text-[10px] font-bold uppercase tracking-widest text-orange-500/60">Playing Audio Version</span>
+                                  )}
+                                </div>
                                 <audio 
+                                  key={`${selectedRecording.id}-${useAudioFallback}`}
                                   ref={mediaRef as any}
-                                  src={`/uploads/${selectedRecording.filename}`}
+                                  src={`/uploads/${(useAudioFallback || selectedRecording.transcription_filename !== selectedRecording.filename) ? selectedRecording.transcription_filename : selectedRecording.filename}`}
                                   onTimeUpdate={handleTimeUpdate}
                                   onPlay={() => setIsPlaying(true)}
                                   onPause={() => setIsPlaying(false)}
+                                  onError={handleMediaError}
                                 />
                               </div>
                             )}
@@ -929,11 +1253,17 @@ export default function App() {
                                     const rect = e.currentTarget.getBoundingClientRect();
                                     const x = e.clientX - rect.left;
                                     const pct = x / rect.width;
-                                    if (mediaRef.current) mediaRef.current.currentTime = pct * mediaRef.current.duration;
+                                    if (mediaRef.current && isFinite(mediaRef.current.duration)) {
+                                      mediaRef.current.currentTime = pct * mediaRef.current.duration;
+                                    }
                                   }}>
                                     <div 
                                       className="h-full bg-orange-500" 
-                                      style={{ width: `${(currentTime / (mediaRef.current?.duration || 1)) * 100}%` }}
+                                      style={{ 
+                                        width: `${mediaRef.current && isFinite(mediaRef.current.duration) && mediaRef.current.duration > 0 
+                                          ? (currentTime / mediaRef.current.duration) * 100 
+                                          : 0}%` 
+                                      }}
                                     />
                                   </div>
                                   <div className="flex justify-between mt-2 text-[10px] font-mono opacity-60">
@@ -1034,6 +1364,35 @@ export default function App() {
                               </div>
                             ) : (
                               <div className="space-y-6">
+                                <div className="sticky top-0 z-20 bg-[#0F1115] pb-4 border-b border-white/5 mb-6">
+                                  <div className="relative">
+                                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-white/20" size={16} />
+                                    <input 
+                                      type="text"
+                                      placeholder="Search keywords in transcript..."
+                                      className="w-full bg-white/5 border border-white/10 rounded-xl py-2.5 pl-10 pr-4 text-sm focus:outline-none focus:border-orange-500/50 transition-colors placeholder:text-white/10"
+                                      value={searchQuery}
+                                      onChange={e => setSearchQuery(e.target.value)}
+                                    />
+                                    {searchQuery && (
+                                      <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-3">
+                                        <div className="text-[10px] font-bold uppercase tracking-widest text-orange-500 bg-orange-500/10 px-2 py-1 rounded-md">
+                                          {selectedRecording.transcript.utterances?.reduce((acc, u) => {
+                                            const matches = u.text.match(new RegExp(searchQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'));
+                                            return acc + (matches ? matches.length : 0);
+                                          }, 0)} matches
+                                        </div>
+                                        <button 
+                                          onClick={() => setSearchQuery('')}
+                                          className="text-white/20 hover:text-white/60 transition-colors"
+                                        >
+                                          <Plus size={14} className="rotate-45" />
+                                        </button>
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+
                                 {selectedRecording.transcript.utterances?.map((u, i) => (
                                   <div key={i} className="group">
                                     <div className="flex items-center gap-3 mb-2">
@@ -1086,7 +1445,13 @@ export default function App() {
                                                 seekTo(w.start / 1000);
                                               }
                                             }}
-                                            className={`transition-all rounded px-0.5 ${isWordActive(w) ? 'bg-orange-500 text-white shadow-[0_0_15px_rgba(249,115,22,0.5)]' : 'hover:bg-white/10'}`}
+                                            className={`transition-all rounded px-0.5 ${
+                                              isWordActive(w) 
+                                                ? 'bg-orange-500 text-white shadow-[0_0_15px_rgba(249,115,22,0.5)]' 
+                                                : isWordHighlighted(w.text)
+                                                  ? 'bg-yellow-500/40 text-white ring-1 ring-yellow-500/50'
+                                                  : 'hover:bg-white/10'
+                                            }`}
                                           >
                                             {w.text}{' '}
                                           </span>
@@ -1110,7 +1475,9 @@ export default function App() {
                           >
                             {selectedRecording.summary ? (
                               <div className="prose prose-invert prose-orange max-w-none">
-                                <ReactMarkdown>{selectedRecording.summary}</ReactMarkdown>
+                                <ReactMarkdown>
+                                  {typeof selectedRecording.summary === 'string' ? selectedRecording.summary : ''}
+                                </ReactMarkdown>
                               </div>
                             ) : (
                               <div className="text-center py-20 opacity-40">
@@ -1161,6 +1528,47 @@ export default function App() {
               </div>
             </div>
           </>
+        )}
+
+        {isConverting && (
+          <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[100] flex items-center justify-center p-6">
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              className="bg-zinc-900 border border-white/10 p-8 rounded-3xl max-w-md w-full text-center space-y-6 shadow-2xl"
+            >
+              <div className="relative w-24 h-24 mx-auto">
+                <div className="absolute inset-0 border-4 border-white/5 rounded-full" />
+                <svg className="absolute inset-0 w-full h-full -rotate-90">
+                  <circle
+                    cx="48"
+                    cy="48"
+                    r="44"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="4"
+                    className="text-orange-500 transition-all duration-300"
+                    strokeDasharray={2 * Math.PI * 44}
+                    strokeDashoffset={2 * Math.PI * 44 * (1 - (Number(conversionProgress) || 0) / 100)}
+                  />
+                </svg>
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <span className="text-xl font-bold">{conversionProgress}%</span>
+                </div>
+              </div>
+              <div className="space-y-2">
+                <h3 className="text-xl font-bold">Converting Media</h3>
+                <p className="text-sm text-white/40">This file format is not natively supported. We are converting it to MP3 for playback.</p>
+              </div>
+              <div className="w-full bg-white/5 h-1 rounded-full overflow-hidden">
+                <motion.div 
+                  className="h-full bg-orange-500"
+                  initial={{ width: 0 }}
+                  animate={{ width: `${conversionProgress}%` }}
+                />
+              </div>
+            </motion.div>
+          </div>
         )}
       </div>
     </div>
