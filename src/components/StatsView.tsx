@@ -1,5 +1,14 @@
-import React, { useEffect, useState, useRef } from 'react';
-import * as d3 from 'd3';
+import React, { useEffect, useState } from 'react';
+import { 
+  BarChart, 
+  Bar, 
+  XAxis, 
+  YAxis, 
+  CartesianGrid, 
+  Tooltip, 
+  ResponsiveContainer,
+  Cell
+} from 'recharts';
 import { 
   Database, 
   FileAudio, 
@@ -9,6 +18,7 @@ import {
   HardDrive
 } from 'lucide-react';
 import { motion } from 'motion/react';
+import { apiFetch } from '../services/apiClient';
 
 interface Stats {
   totalCases: number;
@@ -18,104 +28,12 @@ interface Stats {
   recentActivity: { date: string; count: number }[];
 }
 
-const D3BarChart: React.FC<{ data: { date: string; count: number }[] }> = ({ data }) => {
-  const svgRef = useRef<SVGSVGElement>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!svgRef.current || !containerRef.current || !data.length) return;
-
-    const renderChart = () => {
-      const container = containerRef.current!;
-      const width = container.clientWidth;
-      const height = container.clientHeight;
-      const margin = { top: 20, right: 20, bottom: 30, left: 40 };
-
-      const svg = d3.select(svgRef.current);
-      svg.selectAll("*").remove();
-
-      const x = d3.scaleBand()
-        .domain(data.map(d => d.date))
-        .range([margin.left, width - margin.right])
-        .padding(0.3);
-
-      const y = d3.scaleLinear()
-        .domain([0, d3.max(data, d => d.count) || 10])
-        .nice()
-        .range([height - margin.bottom, margin.top]);
-
-      // Grid lines
-      svg.append("g")
-        .attr("class", "grid")
-        .attr("transform", `translate(0,${height - margin.bottom})`)
-        .call(d3.axisBottom(x).tickSize(-height + margin.top + margin.bottom).tickFormat(() => ""))
-        .style("stroke-opacity", 0.05)
-        .style("stroke-dasharray", "3,3");
-
-      svg.append("g")
-        .attr("class", "grid")
-        .attr("transform", `translate(${margin.left},0)`)
-        .call(d3.axisLeft(y).tickSize(-width + margin.left + margin.right).tickFormat(() => ""))
-        .style("stroke-opacity", 0.05)
-        .style("stroke-dasharray", "3,3");
-
-      // Axes
-      svg.append("g")
-        .attr("transform", `translate(0,${height - margin.bottom})`)
-        .call(d3.axisBottom(x).tickFormat(d => {
-          const parts = d.split('-');
-          return parts.length > 1 ? `${parts[1]}/${parts[2]}` : d;
-        }).tickSize(0))
-        .call(g => g.select(".domain").remove())
-        .selectAll("text")
-        .style("fill", "rgba(255,255,255,0.3)")
-        .style("font-size", "10px")
-        .attr("dy", "1em");
-
-      svg.append("g")
-        .attr("transform", `translate(${margin.left},0)`)
-        .call(d3.axisLeft(y).ticks(5).tickSize(0))
-        .call(g => g.select(".domain").remove())
-        .selectAll("text")
-        .style("fill", "rgba(255,255,255,0.3)")
-        .style("font-size", "10px");
-
-      // Bars
-      svg.append("g")
-        .selectAll("rect")
-        .data(data)
-        .join("rect")
-        .attr("x", d => x(d.date)!)
-        .attr("y", d => y(d.count))
-        .attr("height", d => y(0) - y(d.count))
-        .attr("width", x.bandwidth())
-        .attr("fill", (d, i) => i === data.length - 1 ? "#F97316" : "rgba(249, 115, 22, 0.25)")
-        .attr("rx", 4)
-        .attr("ry", 4);
-    };
-
-    renderChart();
-
-    const resizeObserver = new ResizeObserver(() => renderChart());
-    resizeObserver.observe(containerRef.current);
-
-    return () => resizeObserver.disconnect();
-  }, [data]);
-
-  return (
-    <div ref={containerRef} className="w-full h-full">
-      <svg ref={svgRef} className="w-full h-full overflow-visible" />
-    </div>
-  );
-};
-
 export const StatsView: React.FC = () => {
   const [stats, setStats] = useState<Stats | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch('/api/stats')
-      .then(res => res.json())
+    apiFetch('/api/stats')
       .then(data => {
         setStats(data);
         setLoading(false);
@@ -191,13 +109,29 @@ export const StatsView: React.FC = () => {
         <div className="bg-white/5 border border-white/5 rounded-2xl p-6">
           <h4 className="text-xs font-bold uppercase tracking-widest text-white/40 mb-6">Recent Activity (Last 7 Days)</h4>
           <div className="h-48 w-full">
-            {stats.recentActivity && stats.recentActivity.length > 0 ? (
-              <D3BarChart data={stats.recentActivity} />
-            ) : (
-              <div className="h-full w-full flex items-center justify-center text-white/20 text-xs italic">
-                No recent activity recorded
-              </div>
-            )}
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={stats.recentActivity}>
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
+                <XAxis 
+                  dataKey="date" 
+                  axisLine={false} 
+                  tickLine={false} 
+                  tick={{ fill: 'rgba(255,255,255,0.3)', fontSize: 10 }}
+                  tickFormatter={(val) => val.split('-').slice(1).join('/')}
+                />
+                <YAxis axisLine={false} tickLine={false} tick={{ fill: 'rgba(255,255,255,0.3)', fontSize: 10 }} />
+                <Tooltip 
+                  contentStyle={{ backgroundColor: '#16191E', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '12px' }}
+                  itemStyle={{ color: '#fff' }}
+                  cursor={{ fill: 'rgba(255,255,255,0.05)' }}
+                />
+                <Bar dataKey="count" radius={[4, 4, 0, 0]}>
+                  {stats.recentActivity.map((entry, index) => (
+                    <Cell key={`cell-${index}`} fill={index === stats.recentActivity.length - 1 ? '#F97316' : '#F9731640'} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
           </div>
         </div>
 

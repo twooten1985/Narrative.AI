@@ -22,19 +22,43 @@ import {
   ExternalLink,
   Download,
   AlertCircle,
-  Search
+  Search,
+  Copy,
+  Check,
+  Printer,
+  Maximize2,
+  Minimize2,
+  Calendar,
+  Sparkles
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { format } from 'date-fns';
 import { useDropzone } from 'react-dropzone';
-import ReactMarkdown from 'react-markdown';
 import { saveAs } from 'file-saver';
-import { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType } from 'docx';
-import { Case, Recording, TranscriptData, Utterance, Word, ApodResult } from './types';
-import { generateSummary, runApodAnalysis, INTERVIEW_PROMPTS } from './services/geminiService';
-import { runLemurTask, LEMUR_PROMPTS } from './services/assemblyService';
+import { Case, Recording, ReportMeta, Word } from './types';
+import { INTERVIEW_PROMPTS } from './services/geminiService';
 import { MassProcessingView } from './components/MassProcessingView';
 import { StatsView } from './components/StatsView';
+import { ReportBody } from './components/ReportBody';
+import { TranscriptList } from './components/TranscriptList';
+import { apiFetch, initApiSession } from './services/apiClient';
+import { deleteRemoteTranscript, generateReportOnServer, transcribeLocally, transcribeOnServer } from './services/reportClient';
+import { pollWithBackoff } from './services/polling';
+import { buildPrintableReportHtml } from './services/reportHtml';
+import { reportToDocxBlob } from './services/reportDocx';
+import { AI_DISCLAIMER, formatAuditLine, formatGeneratedAt } from './services/audit';
+import { getElectron } from './electron-bridge';
+import { DEFAULT_AAI_API_BASE, DEFAULT_LLM_GATEWAY_URL } from './services/config';
+
+export const getAssemblyAISummary = (transcript: any): string => {
+  if (transcript?.speech_understanding?.response?.summarization?.status === 'success') {
+    const topics = transcript.speech_understanding.response.summarization.summary;
+    if (Array.isArray(topics)) {
+      return topics.map((t: any) => `### ${t.headline}\n${t.text}`).join('\n\n');
+    }
+  }
+  return transcript?.summary || "";
+};
 
 class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean, error: Error | null }> {
   constructor(props: { children: React.ReactNode }) {
@@ -106,9 +130,27 @@ function AppContent() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingProgress, setProcessingProgress] = useState(0);
   const [processingStatus, setProcessingStatus] = useState('');
-  const [assemblyKey, setAssemblyKey] = useState(localStorage.getItem('assembly_ai_key') || '');
-  const [geminiKey, setGeminiKey] = useState(localStorage.getItem('gemini_api_key') || '');
+  const [hasAssemblyKey, setHasAssemblyKey] = useState(false);
+  const [hasGeminiKey, setHasGeminiKey] = useState(false);
+  const [allowGemini, setAllowGemini] = useState(false);
+  const [deleteRemoteTranscripts, setDeleteRemoteTranscripts] = useState(true);
+  const [officerName, setOfficerName] = useState('');
+  const [officerBadge, setOfficerBadge] = useState('');
+  const [aaiApiBase, setAaiApiBase] = useState(DEFAULT_AAI_API_BASE);
+  const [llmGatewayUrl, setLlmGatewayUrl] = useState(DEFAULT_LLM_GATEWAY_URL);
+  const [chunkTokenLimit, setChunkTokenLimit] = useState(100000);
+  const [massConcurrency, setMassConcurrency] = useState(2);
   const [preferAssemblySummary, setPreferAssemblySummary] = useState(localStorage.getItem('prefer_assembly_summary') === 'true');
+  const [reportError, setReportError] = useState<string | null>(null);
+  const [timelineError, setTimelineError] = useState<string | null>(null);
+  const [timelineMeta, setTimelineMeta] = useState<ReportMeta | null>(null);
+  const [cleanMessage, setCleanMessage] = useState<string | null>(null);
+  const [isCleaning, setIsCleaning] = useState(false);
+  const [keyTestMessage, setKeyTestMessage] = useState<string | null>(null);
+  const [isTestingKeys, setIsTestingKeys] = useState(false);
+  const [regressMessage, setRegressMessage] = useState<string | null>(null);
+  const [isRegressing, setIsRegressing] = useState(false);
+  const [appReady, setAppReady] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [speakerLabels, setSpeakerLabels] = useState<Record<string, string>>({});
@@ -119,17 +161,175 @@ function AppContent() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isDeletingCase, setIsDeletingCase] = useState(false);
   const [isHelpOpen, setIsHelpOpen] = useState(false);
-  const [tempAssemblyKey, setTempAssemblyKey] = useState(assemblyKey);
-  const [tempGeminiKey, setTempGeminiKey] = useState(geminiKey);
+  const [tempAssemblyKey, setTempAssemblyKey] = useState('');
+  const [tempGeminiKey, setTempGeminiKey] = useState('');
+  const [tempAllowGemini, setTempAllowGemini] = useState(false);
+  const [tempDeleteRemote, setTempDeleteRemote] = useState(true);
+  const [tempOfficerName, setTempOfficerName] = useState('');
+  const [tempOfficerBadge, setTempOfficerBadge] = useState('');
+  const [tempApiBase, setTempApiBase] = useState(DEFAULT_AAI_API_BASE);
+  const [tempGatewayUrl, setTempGatewayUrl] = useState(DEFAULT_LLM_GATEWAY_URL);
+  const [tempChunkLimit, setTempChunkLimit] = useState('100000');
+  const [tempMassConcurrency, setTempMassConcurrency] = useState('2');
   const [tempPreferAssembly, setTempPreferAssembly] = useState(preferAssemblySummary);
+  const [gatewayModel, setGatewayModel] = useState<string>(localStorage.getItem('gateway_model') || 'claude-sonnet-4-6');
+  const [tempGatewayModel, setTempGatewayModel] = useState<string>(gatewayModel);
+  const [localWhisperMode, setLocalWhisperMode] = useState<boolean>(localStorage.getItem('local_whisper_mode') === 'true');
+  const [tempLocalWhisper, setTempLocalWhisper] = useState<boolean>(localWhisperMode);
+  const [timelineReport, setTimelineReport] = useState<string | null>(null);
+  const [isGeneratingTimeline, setIsGeneratingTimeline] = useState<boolean>(false);
+  const [isEditingTimeline, setIsEditingTimeline] = useState<boolean>(false);
+  const [tempTimelineReport, setTempTimelineReport] = useState<string>('');
+  const [isRegenConfirmOpen, setIsRegenConfirmOpen] = useState(false);
+  const [tempRegenType, setTempRegenType] = useState('Suspect Interview');
+  const [infoModalMode, setInfoModalMode] = useState<'mass-jail-call' | 'mass-keyword-search' | null>(null);
+  const [jailCallQueue, setJailCallQueue] = useState(true);
+  const [jailCallTranscribe, setJailCallTranscribe] = useState(true);
+  const [jailCallSummarize, setJailCallSummarize] = useState(true);
+  const [keywordBoost, setKeywordBoost] = useState(true);
+  const [keywordTranscribe, setKeywordTranscribe] = useState(true);
+  const [keywordContext, setKeywordContext] = useState(true);
   const [topHeight, setTopHeight] = useState(400);
   const [isResizing, setIsResizing] = useState(false);
   const [mode, setMode] = useState<'cases' | 'mass-jail-call' | 'mass-keyword-search' | 'statistics'>('cases');
   const [isConverting, setIsConverting] = useState(false);
   const [conversionProgress, setConversionProgress] = useState(0);
   const [searchQuery, setSearchQuery] = useState('');
+  const [isRegeneratingSummary, setIsRegeneratingSummary] = useState(false);
+  const [copySuccess, setCopySuccess] = useState(false);
+  const [summaryFilter, setSummaryFilter] = useState('');
+  const [isSummaryExpanded, setIsSummaryExpanded] = useState(false);
+
+  const [customPrompts, setCustomPrompts] = useState<Record<string, string>>(() => {
+    try {
+      return JSON.parse(localStorage.getItem('custom_prompts') || '{}');
+    } catch (e) {
+      return {};
+    }
+  });
+  const [newPromptName, setNewPromptName] = useState('');
+  const [newPromptText, setNewPromptText] = useState('');
+
+  const handleAddPrompt = () => {
+    if (!newPromptName.trim() || !newPromptText.trim()) {
+      alert("Please enter both a title and prompt text.");
+      return;
+    }
+    const name = newPromptName.trim();
+    if (name in INTERVIEW_PROMPTS) {
+      alert("Cannot overwrite default interview prompts.");
+      return;
+    }
+    const updated = { ...customPrompts, [name]: newPromptText.trim() };
+    setCustomPrompts(updated);
+    localStorage.setItem('custom_prompts', JSON.stringify(updated));
+    setNewPromptName('');
+    setNewPromptText('');
+  };
+
+  const handleDeletePrompt = (name: string) => {
+    const updated = { ...customPrompts };
+    delete updated[name];
+    setCustomPrompts(updated);
+    localStorage.setItem('custom_prompts', JSON.stringify(updated));
+    if (interviewType === name) {
+      setInterviewType("Suspect Interview");
+    }
+  };
 
   const mediaRef = useRef<HTMLMediaElement>(null);
+
+  const copyToClipboard = async (text: string) => {
+    try {
+      if ((window as any).electron && (window as any).electron.writeClipboardText) {
+        const success = (window as any).electron.writeClipboardText(text);
+        if (success !== false) return true;
+      }
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch (err) {
+      console.error("Clipboard copy failed:", err);
+      // Fallback: create temporary textarea to copy text
+      try {
+        const textarea = document.createElement('textarea');
+        textarea.value = text;
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textarea);
+        return true;
+      } catch (fallbackErr) {
+        console.error("Fallback copy failed:", fallbackErr);
+        return false;
+      }
+    }
+  };
+
+  const handleCopySummary = async () => {
+    if (!selectedRecording?.summary) return;
+    const success = await copyToClipboard(selectedRecording.summary);
+    if (success) {
+      setCopySuccess(true);
+      setTimeout(() => setCopySuccess(false), 2000);
+    } else {
+      alert("Failed to copy text to clipboard.");
+    }
+  };
+
+  const currentAudit = (meta?: ReportMeta | null) => formatAuditLine({
+    model: meta?.model,
+    requestId: meta?.requestId,
+    transcriptId: meta?.transcriptId,
+    generatedAt: meta?.generatedAt,
+  });
+
+  const printableHtml = (summary: string, meta?: ReportMeta | null) => buildPrintableReportHtml({
+    caseName: selectedCase?.name,
+    recordingName: selectedRecording?.original_name,
+    interviewType: selectedRecording?.interview_type || interviewType,
+    reportDate: formatGeneratedAt(meta?.generatedAt) === 'Unknown'
+      ? format(new Date(), 'yyyy-MM-dd HH:mm:ss')
+      : formatGeneratedAt(meta?.generatedAt),
+    officerName,
+    officerBadge,
+    markdown: summary,
+    auditLine: currentAudit(meta),
+  });
+
+  const handlePrintReport = () => {
+    if (!selectedRecording?.summary) return;
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) {
+      alert("Please allow popups in your browser to print official reports.");
+      return;
+    }
+    printWindow.document.write(printableHtml(selectedRecording.summary, selectedRecording.report_meta));
+    printWindow.document.close();
+    printWindow.focus();
+    setTimeout(() => {
+      printWindow.print();
+    }, 400);
+  };
+
+  const handleExportPdf = async () => {
+    if (!selectedRecording?.summary) return;
+    const electron = getElectron();
+    if (!electron) {
+      alert("PDF export uses the desktop app. Use Print to save a PDF from the browser preview.");
+      return;
+    }
+    const meta = selectedRecording.report_meta;
+    const officer = [officerName, officerBadge ? `#${officerBadge}` : ''].filter(Boolean).join(' ');
+    const headerText = [`Case: ${selectedCase?.name || 'Untitled case'}`, officer, formatGeneratedAt(meta?.generatedAt)].filter(Boolean).join('   |   ');
+    const result = await electron.exportPdf({
+      html: printableHtml(selectedRecording.summary, meta),
+      defaultFilename: `${selectedCase?.name || 'case'}_${selectedRecording.original_name}.pdf`,
+      footerNote: AI_DISCLAIMER,
+      auditLine: currentAudit(meta),
+      headerText,
+    });
+    if (result?.error) alert(`PDF export failed: ${result.error}`);
+  };
 
   const highlightText = (text: string, query: string) => {
     if (!query.trim()) return text;
@@ -146,6 +346,42 @@ function AppContent() {
         )}
       </>
     );
+  };
+
+  const recursiveHighlight = (children: React.ReactNode): React.ReactNode => {
+    if (!summaryFilter.trim()) return children;
+    return React.Children.map(children, (child) => {
+      if (typeof child === 'string') {
+        return highlightText(child, summaryFilter);
+      }
+      if (React.isValidElement(child)) {
+        const element = child as React.ReactElement<any>;
+        if (element.props && element.props.children) {
+          return React.cloneElement(element, {
+            ...element.props,
+            children: recursiveHighlight(element.props.children)
+          });
+        }
+      }
+      return child;
+    });
+  };
+
+  const markdownComponents = {
+    p: ({ children }: any) => <p>{recursiveHighlight(children)}</p>,
+    li: ({ children }: any) => <li>{recursiveHighlight(children)}</li>,
+    h1: ({ children }: any) => <h1>{recursiveHighlight(children)}</h1>,
+    h2: ({ children }: any) => <h2>{recursiveHighlight(children)}</h2>,
+    h3: ({ children }: any) => <h3>{recursiveHighlight(children)}</h3>,
+    h4: ({ children }: any) => <h4>{recursiveHighlight(children)}</h4>,
+    h5: ({ children }: any) => <h5>{recursiveHighlight(children)}</h5>,
+    h6: ({ children }: any) => <h6>{recursiveHighlight(children)}</h6>,
+    strong: ({ children }: any) => <strong>{recursiveHighlight(children)}</strong>,
+    em: ({ children }: any) => <em>{recursiveHighlight(children)}</em>,
+    span: ({ children }: any) => <span>{recursiveHighlight(children)}</span>,
+    td: ({ children }: any) => <td>{recursiveHighlight(children)}</td>,
+    th: ({ children }: any) => <th>{recursiveHighlight(children)}</th>,
+    a: ({ children, href }: any) => <a href={href} target="_blank" rel="noopener noreferrer">{recursiveHighlight(children)}</a>,
   };
 
   useEffect(() => {
@@ -190,43 +426,88 @@ function AppContent() {
     setIsConverting(true);
     setConversionProgress(0);
     try {
-      await fetch(`/api/recordings/${selectedRecording.id}/convert`, { method: 'POST' });
-      
-      // Poll for progress
-      const poll = setInterval(async () => {
-        try {
-          const res = await fetch(`/api/recordings/${selectedRecording.id}/convert/progress`);
-          const data = await res.json();
-          setConversionProgress(Number(data.progress) || 0);
-          if (data.status === 'completed') {
-            clearInterval(poll);
-            setIsConverting(false);
-            setMediaError(null);
-            // Refresh case details to get the new transcription_filename
-            await fetchCaseDetails(selectedCase!.id);
-            const updatedRec = await safeFetch(`/api/recordings/${selectedRecording.id}`);
-            setSelectedRecording(updatedRec);
-          }
-        } catch (e) {
-          clearInterval(poll);
-          setIsConverting(false);
-        }
-      }, 1000);
+      await apiFetch(`/api/recordings/${selectedRecording.id}/convert`, { method: 'POST' });
+      await pollWithBackoff({
+        initialDelayMs: 1000,
+        maxDelayMs: 8000,
+        timeoutMs: 30 * 60 * 1000,
+        poll: () => apiFetch(`/api/recordings/${selectedRecording.id}/convert/progress`),
+        isDone: (data) => data.status === 'completed',
+        onUpdate: (data) => setConversionProgress(Number(data.progress) || 0),
+      });
+      setIsConverting(false);
+      setMediaError(null);
+      await fetchCaseDetails(selectedCase!.id);
+      const updatedRec = await apiFetch(`/api/recordings/${selectedRecording.id}`);
+      setSelectedRecording(updatedRec);
     } catch (error) {
       console.error("Conversion failed:", error);
       setIsConverting(false);
     }
   };
 
+  const applyServerSettings = (settings: any) => {
+    setAllowGemini(settings.allowGemini === true);
+    setDeleteRemoteTranscripts(settings.deleteRemoteTranscripts !== false);
+    setOfficerName(settings.officerName || '');
+    setOfficerBadge(settings.officerBadge || '');
+    setAaiApiBase(settings.aaiApiBase || DEFAULT_AAI_API_BASE);
+    setLlmGatewayUrl(settings.llmGatewayUrl || DEFAULT_LLM_GATEWAY_URL);
+    setChunkTokenLimit(Number(settings.chunkTokenLimit) || 100000);
+    setMassConcurrency(Number(settings.massConcurrency) || 2);
+    setHasAssemblyKey(Boolean(settings.hasAssemblyKey));
+    setHasGeminiKey(Boolean(settings.hasGeminiKey));
+  };
+
   useEffect(() => {
-    fetchCases();
+    (async () => {
+      try {
+        await initApiSession();
+        const electron = getElectron();
+        if (electron) {
+          const storedAssembly = localStorage.getItem('assembly_ai_key');
+          const storedGemini = localStorage.getItem('gemini_api_key');
+          if (storedAssembly) {
+            if (!(await electron.secrets.hasKey('assemblyai'))) {
+              const saved = await electron.secrets.setKey('assemblyai', storedAssembly);
+              if (!saved.ok) throw new Error(saved.error || 'Could not migrate the AssemblyAI key.');
+            }
+            localStorage.removeItem('assembly_ai_key');
+          }
+          if (storedGemini) {
+            if (!(await electron.secrets.hasKey('gemini'))) {
+              const saved = await electron.secrets.setKey('gemini', storedGemini);
+              if (!saved.ok) throw new Error(saved.error || 'Could not migrate the Gemini key.');
+            }
+            localStorage.removeItem('gemini_api_key');
+          }
+        }
+        applyServerSettings(await apiFetch('/api/settings'));
+        await fetchCases();
+      } catch (error) {
+        console.error('Startup failed:', error);
+      } finally {
+        setAppReady(true);
+      }
+    })();
   }, []);
 
   useEffect(() => {
-    setTempAssemblyKey(assemblyKey);
-    setTempGeminiKey(geminiKey);
+    if (!isSettingsOpen) return;
+    setTempAssemblyKey('');
+    setTempGeminiKey('');
     setTempPreferAssembly(preferAssemblySummary);
-  }, [assemblyKey, geminiKey, preferAssemblySummary]);
+    setTempGatewayModel(gatewayModel);
+    setTempLocalWhisper(localWhisperMode);
+    setTempAllowGemini(allowGemini);
+    setTempDeleteRemote(deleteRemoteTranscripts);
+    setTempOfficerName(officerName);
+    setTempOfficerBadge(officerBadge);
+    setTempApiBase(aaiApiBase);
+    setTempGatewayUrl(llmGatewayUrl);
+    setTempChunkLimit(String(chunkTokenLimit));
+    setTempMassConcurrency(String(massConcurrency));
+  }, [isSettingsOpen]);
 
   useEffect(() => {
     if (selectedRecording?.speaker_labels) {
@@ -234,16 +515,116 @@ function AppContent() {
     } else {
       setSpeakerLabels({});
     }
+    if (selectedRecording?.interview_type) {
+      setInterviewType(selectedRecording.interview_type);
+    }
   }, [selectedRecording]);
 
-  const handleSaveSettings = () => {
-    setAssemblyKey(tempAssemblyKey);
-    setGeminiKey(tempGeminiKey);
-    setPreferAssemblySummary(tempPreferAssembly);
-    localStorage.setItem('assembly_ai_key', tempAssemblyKey);
-    localStorage.setItem('gemini_api_key', tempGeminiKey);
-    localStorage.setItem('prefer_assembly_summary', tempPreferAssembly.toString());
-    setIsSettingsOpen(false);
+  const handleSaveSettings = async () => {
+    const electron = getElectron();
+    try {
+      if (tempAssemblyKey.trim()) {
+        if (!electron) throw new Error('API keys can only be saved in the desktop app.');
+        const saved = await electron.secrets.setKey('assemblyai', tempAssemblyKey.trim());
+        if (!saved.ok) throw new Error(saved.error || 'Could not save the AssemblyAI key.');
+      }
+      if (tempGeminiKey.trim()) {
+        if (!electron) throw new Error('API keys can only be saved in the desktop app.');
+        const saved = await electron.secrets.setKey('gemini', tempGeminiKey.trim());
+        if (!saved.ok) throw new Error(saved.error || 'Could not save the Gemini key.');
+      }
+      setPreferAssemblySummary(tempPreferAssembly);
+      setGatewayModel(tempGatewayModel);
+      setLocalWhisperMode(tempLocalWhisper);
+      localStorage.setItem('prefer_assembly_summary', tempPreferAssembly.toString());
+      localStorage.setItem('gateway_model', tempGatewayModel);
+      localStorage.setItem('local_whisper_mode', tempLocalWhisper.toString());
+      if (electron) {
+        localStorage.removeItem('assembly_ai_key');
+        localStorage.removeItem('gemini_api_key');
+      }
+      const savedSettings = await apiFetch('/api/settings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          allowGemini: tempAllowGemini,
+          deleteRemoteTranscripts: tempDeleteRemote,
+          officerName: tempOfficerName,
+          officerBadge: tempOfficerBadge,
+          aaiApiBase: tempApiBase,
+          llmGatewayUrl: tempGatewayUrl,
+          chunkTokenLimit: Number(tempChunkLimit),
+          massConcurrency: Number(tempMassConcurrency),
+        }),
+      });
+      applyServerSettings(savedSettings);
+      setTempAssemblyKey('');
+      setTempGeminiKey('');
+      setIsSettingsOpen(false);
+    } catch (error: any) {
+      alert(error.message || 'Could not save settings.');
+    }
+  };
+
+  const handleClearKey = async (name: 'assemblyai' | 'gemini') => {
+    const electron = getElectron();
+    if (!electron) return;
+    const cleared = await electron.secrets.clearKey(name);
+    if (!cleared.ok) {
+      alert(cleared.error || 'Could not clear that key.');
+      return;
+    }
+    if (name === 'assemblyai') setTempAssemblyKey('');
+    if (name === 'gemini') setTempGeminiKey('');
+    applyServerSettings(await apiFetch('/api/settings'));
+  };
+
+  const handleCleanReports = async () => {
+    if (!window.confirm('Back up the database, then remove prompt text and reasoning traces from saved reports?')) return;
+    setIsCleaning(true);
+    setCleanMessage(null);
+    try {
+      const result = await apiFetch('/api/maintenance/clean-reports', { method: 'POST' });
+      setCleanMessage(`Backup: ${result.backupPath}. Cleaned ${result.recordingsChanged} of ${result.recordingsExamined} reports and ${result.timelinesChanged} of ${result.timelinesExamined} timelines.`);
+      if (selectedCase) await fetchCaseDetails(selectedCase.id);
+    } catch (error: any) {
+      setCleanMessage(error.message || 'Clean failed.');
+    } finally {
+      setIsCleaning(false);
+    }
+  };
+
+  const handleTestKey = async (service: 'assemblyai' | 'gemini') => {
+    setIsTestingKeys(true);
+    setKeyTestMessage(null);
+    try {
+      const result = await apiFetch('/api/keys/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ service }),
+      });
+      setKeyTestMessage(`${result.ok ? 'Pass' : 'Fail'}: ${result.message}`);
+    } catch (error: any) {
+      setKeyTestMessage(`Fail: ${error.message || 'Key test failed.'}`);
+    } finally {
+      setIsTestingKeys(false);
+    }
+  };
+
+  const handleRegress = async () => {
+    setIsRegressing(true);
+    setRegressMessage(null);
+    try {
+      const result = await apiFetch('/api/maintenance/regress', { method: 'POST' });
+      const failed = (result.checks || []).filter((check: { ok: boolean }) => !check.ok);
+      setRegressMessage(result.ok
+        ? `Sample check passed (${result.checks.length} checks).`
+        : `Sample check failed: ${failed.map((check: { name: string; detail: string }) => `${check.name}: ${check.detail}`).join(' ')}`);
+    } catch (error: any) {
+      setRegressMessage(error.message || 'Sample check failed.');
+    } finally {
+      setIsRegressing(false);
+    }
   };
 
   const formatTime = (seconds: number) => {
@@ -265,29 +646,7 @@ function AppContent() {
     }
   };
 
-  const safeFetch = async (url: string, options?: RequestInit) => {
-    const res = await fetch(url, options);
-    const contentType = res.headers.get("content-type");
-    if (!res.ok) {
-      let errorMessage = `Server error (${res.status})`;
-      try {
-        const text = await res.text();
-        if (text.startsWith('{')) {
-          const json = JSON.parse(text);
-          errorMessage = json.error || errorMessage;
-        } else {
-          errorMessage = text.slice(0, 100);
-        }
-      } catch (e) {
-        // Fallback to default message
-      }
-      throw new Error(errorMessage);
-    }
-    if (contentType && contentType.includes("application/json")) {
-      return res.json();
-    }
-    return res.text();
-  };
+  const safeFetch = (url: string, options?: RequestInit) => apiFetch(url, options);
 
   const fetchCases = async () => {
     try {
@@ -299,11 +658,67 @@ function AppContent() {
     }
   };
 
+  const fetchCaseTimeline = async (caseId: string) => {
+    try {
+      const res = await safeFetch(`/api/cases/${caseId}/timeline`);
+      setTimelineReport(res.timelineReport);
+      setTimelineMeta(res.timelineMeta || null);
+    } catch (e) {
+      console.error("Failed to fetch timeline:", e);
+      setTimelineReport(null);
+    }
+  };
+
+  const blockedGeminiNote = () => {
+    if (allowGemini && !preferAssemblySummary) return '';
+    return ' Google Gemini is turned off, so this case was not sent to Google.';
+  };
+
+  const handleGenerateTimeline = async (engine: 'gateway' | 'gemini' = 'gateway') => {
+    if (!selectedCase) return;
+    setIsGeneratingTimeline(true);
+    setTimelineError(null);
+    try {
+      const res = await safeFetch(`/api/cases/${selectedCase.id}/timeline`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: gatewayModel,
+          engine,
+          strictlyAssembly: preferAssemblySummary,
+        })
+      });
+      setTimelineReport(res.timelineReport);
+      setTimelineMeta(res.timelineMeta || null);
+    } catch (e: any) {
+      setTimelineError(`${e.message || 'Timeline generation failed.'}${engine === 'gateway' ? blockedGeminiNote() : ''}`);
+    } finally {
+      setIsGeneratingTimeline(false);
+    }
+  };
+
+  const handleSaveTimeline = async () => {
+    if (!selectedCase) return;
+    try {
+      await safeFetch(`/api/cases/${selectedCase.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ timeline_report: tempTimelineReport })
+      });
+      setTimelineReport(tempTimelineReport);
+      setIsEditingTimeline(false);
+    } catch (e: any) {
+      alert(`Failed to save timeline: ${e.message}`);
+    }
+  };
+
   const fetchCaseDetails = async (id: string) => {
     try {
       setMode('cases');
+      setSelectedRecording(null);
       const data = await safeFetch(`/api/cases/${id}`);
       setSelectedCase(data);
+      fetchCaseTimeline(id);
     } catch (error) {
       console.error("Failed to fetch case details:", error);
     }
@@ -345,55 +760,42 @@ function AppContent() {
   const onDrop = async (acceptedFiles: File[]) => {
     if (!selectedCase) return;
     setIsUploading(true);
-    const formData = new FormData();
-    formData.append('file', acceptedFiles[0]);
-
+    const file = acceptedFiles[0];
     try {
-      const res = await fetch(`/api/cases/${selectedCase.id}/recordings`, {
-        method: 'POST',
-        body: formData,
-      });
-      
-      if (!res.ok) {
-        const text = await res.text();
-        let errorMsg = `Upload failed (${res.status})`;
-        try {
-          const json = JSON.parse(text);
-          errorMsg = json.error || errorMsg;
-        } catch (e) {
-          errorMsg = text.slice(0, 100);
-        }
-        throw new Error(errorMsg);
+      const electron = getElectron();
+      let filePath = '';
+      try { filePath = electron?.pathForFile?.(file) || ''; } catch { filePath = ''; }
+      let data;
+      if (filePath && electron?.allowPath) {
+        const allowed = await electron.allowPath(filePath);
+        if (!allowed.ok) throw new Error(allowed.error || 'Could not use that file.');
+        data = await apiFetch(`/api/cases/${selectedCase.id}/recordings/import`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path: filePath }),
+        });
+      } else {
+        const formData = new FormData();
+        formData.append('file', file);
+        data = await apiFetch(`/api/cases/${selectedCase.id}/recordings`, {
+          method: 'POST',
+          body: formData,
+        });
       }
-      
-      const data = await res.json();
       
       if (data.status === 'converting') {
         setIsConverting(true);
         setConversionProgress(0);
-        
-        // Poll for progress
-        const poll = setInterval(async () => {
-          try {
-            const progressRes = await fetch(`/api/recordings/${data.id}/convert/progress`);
-            if (!progressRes.ok) {
-              const text = await progressRes.text();
-              throw new Error(`Progress check failed: ${text.slice(0, 50)}`);
-            }
-            const progressData = await progressRes.json();
-            setConversionProgress(Number(progressData.progress) || 0);
-            if (progressData.status === 'completed') {
-              clearInterval(poll);
-              setIsConverting(false);
-              await fetchCaseDetails(selectedCase.id);
-            }
-          } catch (e) {
-            console.error("Polling error:", e);
-            clearInterval(poll);
-            setIsConverting(false);
-            alert("Conversion failed. Check server logs.");
-          }
-        }, 1000);
+        await pollWithBackoff({
+          initialDelayMs: 1000,
+          maxDelayMs: 8000,
+          timeoutMs: 30 * 60 * 1000,
+          poll: () => apiFetch(`/api/recordings/${data.id}/convert/progress`),
+          isDone: (progressData) => progressData.status === 'completed',
+          onUpdate: (progressData) => setConversionProgress(Number(progressData.progress) || 0),
+        });
+        setIsConverting(false);
+        await fetchCaseDetails(selectedCase.id);
       } else {
         await fetchCaseDetails(selectedCase.id);
       }
@@ -408,8 +810,8 @@ function AppContent() {
   const { getRootProps, getInputProps, isDragActive } = useDropzone({ 
     onDrop,
     accept: {
-      'audio/*': ['.mp3', '.wav', '.m4a'],
-      'video/*': ['.mp4', '.mov', '.mpg']
+      'audio/*': ['.mp3', '.wav', '.m4a', '.aac', '.flac', '.ogg', '.wma', '.mp2', '.amr'],
+      'video/*': ['.mp4', '.mov', '.mpg', '.mpeg', '.avi', '.mkv', '.wmv', '.webm', '.3gp', '.ts', '.m2ts']
     },
     multiple: false
   });
@@ -438,152 +840,132 @@ function AppContent() {
     };
   }, [isResizing]);
 
+  // Structured request for report generation (replaces the concatenated "You are an expert
+  // forensic analyst. Analyze the following transcript. ${promptToUse}" string).
+  const buildReportRequest = (type: string, rec: Recording) => {
+    const isBuiltIn = type in INTERVIEW_PROMPTS;
+    return {
+      reportType: type,
+      customInstructions: isBuiltIn ? undefined : customPrompts[type],
+      speakerLabels: rec.speaker_labels || speakerLabels,
+      caseInfo: {
+        caseName: selectedCase?.name,
+        recordingName: rec.original_name,
+        recordingDate: rec.created_at ? format(parseSqliteDate(rec.created_at), 'yyyy-MM-dd') : undefined,
+        reportType: type,
+      },
+    };
+  };
+
+  const saveReport = async (type: string, rec: Recording, engine: 'gateway' | 'gemini') => {
+    const reportReq = buildReportRequest(type, rec);
+    setProcessingStatus(engine === 'gemini' ? 'Writing the report with Gemini…' : 'Writing the report…');
+    const result = await generateReportOnServer({
+      recordingId: rec.id,
+      reportType: reportReq.reportType,
+      customInstructions: reportReq.customInstructions,
+      speakerLabels: reportReq.speakerLabels,
+      caseInfo: reportReq.caseInfo,
+      model: gatewayModel,
+      engine,
+      strictlyAssembly: preferAssemblySummary,
+      onProgress: (message) => setProcessingStatus(message),
+    });
+    let apod = null;
+    if (type === 'Child Harm Suspect Interview' && allowGemini && !preferAssemblySummary) {
+      try {
+        const apodRes = await apiFetch('/api/apod', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            recordingId: rec.id,
+            speakerLabels: reportReq.speakerLabels,
+            strictlyAssembly: preferAssemblySummary,
+          }),
+        });
+        apod = apodRes.results;
+      } catch (e) {
+        console.warn('APOD analysis failed.', e);
+      }
+    }
+    const reportMeta: ReportMeta = {
+      engine: result.engine,
+      model: result.model,
+      requestId: result.requestId,
+      transcriptId: result.transcriptId,
+      generatedAt: result.generatedAt,
+      truncated: result.truncated,
+    };
+    await apiFetch(`/api/recordings/${rec.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        apod_results: apod,
+        interview_type: type,
+        report_meta: reportMeta,
+      }),
+    });
+    if (result.transcriptId && !String(result.transcriptId).startsWith('local-whisper')) {
+      try {
+        await deleteRemoteTranscript(String(result.transcriptId), rec.id);
+      } catch (error) {
+        console.warn('Could not delete the AssemblyAI transcript:', error);
+      }
+    }
+  };
+
   const handleTranscribe = async () => {
-    if (!selectedRecording || !assemblyKey) {
-      alert("Please provide an AssemblyAI API Key in settings.");
+    if (!selectedRecording) return;
+    if (!localWhisperMode && !hasAssemblyKey) {
+      alert("Add an AssemblyAI API key in Settings.");
       return;
     }
     setIsProcessing(true);
-    setProcessingProgress(15);
-    setProcessingStatus('Uploading to AssemblyAI...');
+    setReportError(null);
+    setProcessingProgress(10);
     try {
-      // Helper to handle AssemblyAI responses safely
-      const handleAssemblyRes = async (res: Response) => {
-        const contentType = res.headers.get("content-type");
-        if (contentType && contentType.includes("application/json")) {
-          return res.json();
-        }
-        const text = await res.text();
-        if (text.toLowerCase().includes("api key is disabled")) {
-          throw new Error("AssemblyAI Error: Your API key is disabled. Please check your account at assemblyai.com.");
-        }
-        throw new Error(text || `AssemblyAI error: ${res.status}`);
-      };
-
-      // 1. Get the file from our server as a blob
-      const fileToTranscribe = selectedRecording.transcription_filename || selectedRecording.filename;
-      const fileRes = await fetch(`/uploads/${fileToTranscribe}`);
-      const blob = await fileRes.blob();
-
-      // 2. Upload to AssemblyAI
-      const uploadRes = await fetch('https://api.assemblyai.com/v2/upload', {
-        method: 'POST',
-        headers: { 'authorization': assemblyKey },
-        body: blob
-      });
-      
-      const uploadData = await handleAssemblyRes(uploadRes);
-      if (!uploadRes.ok) throw new Error(uploadData.error || "Upload to AssemblyAI failed");
-
-      setProcessingProgress(30);
-      setProcessingStatus('Starting Transcription...');
-
-      // 3. Start transcription
-      const transcriptRes = await fetch('https://api.assemblyai.com/v2/transcript', {
-        method: 'POST',
-        headers: {
-          'authorization': assemblyKey,
-          'content-type': 'application/json'
-        },
-        body: JSON.stringify({
-          audio_url: uploadData.upload_url,
-          speaker_labels: true
-        })
-      });
-
-      let transcriptData = await handleAssemblyRes(transcriptRes);
-      if (!transcriptRes.ok) throw new Error(transcriptData.error || "Transcription start failed");
-      
-      setProcessingProgress(45);
-      setProcessingStatus('Transcribing...');
-
-      // 4. Poll for completion
-      while (transcriptData.status !== 'completed' && transcriptData.status !== 'error') {
-        await new Promise(r => setTimeout(r, 3000));
-        const pollRes = await fetch(`https://api.assemblyai.com/v2/transcript/${transcriptData.id}`, {
-          headers: { 'authorization': assemblyKey }
+      if (localWhisperMode) {
+        await transcribeLocally({
+          recordingId: selectedRecording.id,
+          onProgress: (message, progress) => {
+            setProcessingStatus(message);
+            setProcessingProgress(Math.max(10, Math.min(80, progress)));
+          },
         });
-        transcriptData = await handleAssemblyRes(pollRes);
-        
-        // Increment progress slightly while polling
-        setProcessingProgress(prev => Math.min(85, prev + 5));
-      }
-
-      if (transcriptData.status === 'completed') {
-        setProcessingProgress(90);
-        setProcessingStatus('Finalizing Analysis...');
-        // 5. Save to our DB
-        await safeFetch(`/api/recordings/${selectedRecording.id}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ transcript: transcriptData }),
-        });
-        
-        // 6. Generate Summary and APOD
-        try {
-          let summary = null;
-          
-          if (preferAssemblySummary) {
-            setProcessingStatus('Running LeMUR Analysis...');
-            const lemurPrompt = LEMUR_PROMPTS[interviewType as keyof typeof LEMUR_PROMPTS] || LEMUR_PROMPTS["Suspect Interview"];
-            try {
-              summary = await runLemurTask(assemblyKey, transcriptData.id, lemurPrompt);
-            } catch (e) {
-              console.warn("LeMUR summary failed, falling back to Gemini if available.");
-            }
-          }
-          
-          // Only fallback to Gemini if not explicitly preferring AssemblyAI or if AssemblyAI failed
-          if (!summary && !preferAssemblySummary) {
-            try {
-              summary = await generateSummary(transcriptData.text, interviewType, geminiKey);
-            } catch (e) {
-              console.warn("Gemini summary failed, but transcript is available.");
-            }
-          }
-
-          let apod = null;
-          if (interviewType === "Child Harm Suspect Interview") {
-            try {
-              apod = await runApodAnalysis(transcriptData.text, geminiKey);
-            } catch (e) {
-              console.warn("APOD analysis failed (Gemini required).");
-            }
-          }
-
-          await safeFetch(`/api/recordings/${selectedRecording.id}`, {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ summary, apod_results: apod }),
-          });
-        } catch (summaryError: any) {
-          console.error("Analysis saving failed:", summaryError);
-        }
-        
-        setProcessingProgress(100);
-        setProcessingStatus('Complete');
-        await fetchCaseDetails(selectedCase!.id);
-        const updatedRec = await safeFetch(`/api/recordings/${selectedRecording.id}`);
-        setSelectedRecording(updatedRec);
       } else {
-        const errorMsg = transcriptData.error || "";
-        if (errorMsg.toLowerCase().includes("insufficient funds") || errorMsg.toLowerCase().includes("balance")) {
-          alert("AssemblyAI Error: Insufficient funds. Please check your account balance at assemblyai.com.");
-        } else if (errorMsg.toLowerCase().includes("api key is disabled")) {
-          alert("AssemblyAI Error: Your API key is disabled. Please check your account at assemblyai.com.");
-        } else {
-          alert("Transcription failed: " + errorMsg);
-        }
+        await transcribeOnServer({
+          recordingId: selectedRecording.id,
+          includeBuiltinSummary: false,
+          onProgress: (message, progress) => {
+            setProcessingStatus(message);
+            setProcessingProgress(Math.max(10, Math.min(80, progress)));
+          },
+        });
       }
+      setProcessingProgress(88);
+      const engine = (!hasAssemblyKey && allowGemini && !preferAssemblySummary) ? 'gemini' : 'gateway';
+      if (engine === 'gateway' && !hasAssemblyKey) {
+        throw new Error(`An AssemblyAI API key is required.${blockedGeminiNote()}`);
+      }
+      try {
+        await saveReport(interviewType, selectedRecording, engine);
+      } catch (summaryError: any) {
+        console.error(summaryError);
+        setReportError(`${summaryError.message || summaryError}${blockedGeminiNote()}`);
+        setActiveTab('summary');
+      }
+      setProcessingProgress(100);
+      setProcessingStatus('Complete');
+      await fetchCaseDetails(selectedCase!.id);
+      setSelectedRecording(await apiFetch(`/api/recordings/${selectedRecording.id}`));
     } catch (error: any) {
-      console.error(error);
-      const msg = error.message || "";
-      if (msg.toLowerCase().includes("insufficient funds") || msg.toLowerCase().includes("balance")) {
-        alert("AssemblyAI Error: Insufficient funds. Please check your account balance at assemblyai.com.");
-      } else if (msg.toLowerCase().includes("api key is disabled")) {
-        alert("AssemblyAI Error: Your API key is disabled. Please check your account at assemblyai.com.");
+      const msg = error.message || '';
+      if (msg.toLowerCase().includes('insufficient funds') || msg.toLowerCase().includes('balance')) {
+        alert('AssemblyAI Error: Insufficient funds. Please check your account balance at assemblyai.com.');
+      } else if (msg.toLowerCase().includes('api key is disabled')) {
+        alert('AssemblyAI Error: Your API key is disabled. Please check your account at assemblyai.com.');
       } else {
-        alert("Error during transcription: " + msg);
+        alert('Error during transcription: ' + msg);
       }
     } finally {
       setIsProcessing(false);
@@ -598,125 +980,34 @@ function AppContent() {
     }
   };
 
-  const parseMarkdownToDocx = (markdown: string) => {
-    const lines = markdown.split('\n');
-    const paragraphs: Paragraph[] = [];
-
-    const parseInlineMarkdown = (text: string) => {
-      const parts: TextRun[] = [];
-      const boldRegex = /\*\*(.*?)\*\*/g;
-      let lastIndex = 0;
-      let match;
-
-      while ((match = boldRegex.exec(text)) !== null) {
-        if (match.index > lastIndex) {
-          parts.push(new TextRun({ text: text.substring(lastIndex, match.index) }));
-        }
-        parts.push(new TextRun({ text: match[1], bold: true }));
-        lastIndex = boldRegex.lastIndex;
-      }
-
-      if (lastIndex < text.length) {
-        parts.push(new TextRun({ text: text.substring(lastIndex) }));
-      }
-
-      return parts.length > 0 ? parts : [new TextRun({ text })];
-    };
-
-    lines.forEach(line => {
-      const trimmed = line.trim();
-      if (!trimmed) {
-        paragraphs.push(new Paragraph({ text: "" }));
-        return;
-      }
-
-      if (trimmed.startsWith('### ')) {
-        paragraphs.push(new Paragraph({
-          text: trimmed.replace('### ', ''),
-          heading: HeadingLevel.HEADING_3,
-        }));
-      } else if (trimmed.startsWith('## ')) {
-        paragraphs.push(new Paragraph({
-          text: trimmed.replace('## ', ''),
-          heading: HeadingLevel.HEADING_2,
-        }));
-      } else if (trimmed.startsWith('# ')) {
-        paragraphs.push(new Paragraph({
-          text: trimmed.replace('# ', ''),
-          heading: HeadingLevel.HEADING_1,
-        }));
-      } else if (trimmed.startsWith('- ') || trimmed.startsWith('* ')) {
-        const content = trimmed.substring(2);
-        paragraphs.push(new Paragraph({
-          children: parseInlineMarkdown(content),
-          bullet: { level: 0 },
-        }));
-      } else {
-        paragraphs.push(new Paragraph({
-          children: parseInlineMarkdown(trimmed),
-        }));
-      }
-    });
-
-    return paragraphs;
-  };
-
   const handleExportDocx = async () => {
-    if (!selectedRecording || !selectedRecording.transcript || !selectedCase) return;
-
-    const doc = new Document({
-      sections: [{
-        properties: {},
-        children: [
-          new Paragraph({
-            text: `Case: ${selectedCase.name}`,
-            heading: HeadingLevel.HEADING_1,
-            alignment: AlignmentType.CENTER,
-          }),
-          new Paragraph({
-            text: `Recording: ${selectedRecording.original_name}`,
-            heading: HeadingLevel.HEADING_2,
-            alignment: AlignmentType.CENTER,
-          }),
-          new Paragraph({
-            text: `Date: ${format(parseSqliteDate(selectedRecording.created_at), 'MMMM d, yyyy')}`,
-            alignment: AlignmentType.CENTER,
-          }),
-          new Paragraph({ text: "" }), // Spacer
-          
-          new Paragraph({
-            text: "Summary",
-            heading: HeadingLevel.HEADING_2,
-          }),
-          ...parseMarkdownToDocx(selectedRecording.summary || "No summary available."),
-          new Paragraph({ text: "" }), // Spacer
-          new Paragraph({
-            text: "Transcript",
-            heading: HeadingLevel.HEADING_2,
-          }),
-          ...(selectedRecording.transcript.utterances || []).flatMap(u => [
-            new Paragraph({
-              children: [
-                new TextRun({
-                  text: `${speakerLabels[u.speaker] || `Speaker ${u.speaker}`} (${formatTime(u.start / 1000)}):`,
-                  bold: true,
-                }),
-              ],
-            }),
-            new Paragraph({
-              children: [
-                new TextRun({
-                  text: u.text,
-                }),
-              ],
-            }),
-            new Paragraph({ text: "" }), // Spacer
-          ]),
-        ],
-      }],
+    if (!selectedRecording || !selectedCase) return;
+    const meta = selectedRecording.report_meta;
+    const reportDate = formatGeneratedAt(meta?.generatedAt) === 'Unknown'
+      ? format(new Date(), 'yyyy-MM-dd HH:mm:ss')
+      : formatGeneratedAt(meta?.generatedAt);
+    const utteranceLines: { speaker: string; startMs: number; text: string }[] = [];
+    if (selectedRecording.has_transcript) {
+      let offset = 0;
+      while (utteranceLines.length < 20000) {
+        const page = await apiFetch(`/api/recordings/${selectedRecording.id}/utterances?offset=${offset}&limit=200&words=0`);
+        const rows = page.utterances || [];
+        for (const row of rows) utteranceLines.push({ speaker: row.speaker, startMs: row.start, text: row.text });
+        offset += rows.length;
+        if (!rows.length || offset >= (page.total || 0)) break;
+      }
+    }
+    const blob = await reportToDocxBlob({
+      caseName: selectedCase.name,
+      recordingName: selectedRecording.original_name,
+      reportMarkdown: selectedRecording.summary || 'No summary available.',
+      officerName,
+      officerBadge,
+      reportDate,
+      auditLine: currentAudit(meta),
+      speakerLabels,
+      utterances: utteranceLines,
     });
-
-    const blob = await Packer.toBlob(doc);
     saveAs(blob, `${selectedCase.name}_${selectedRecording.original_name}.docx`);
   };
 
@@ -741,6 +1032,41 @@ function AppContent() {
     }
   };
 
+  const triggerRegeneratePrompt = () => {
+    setTempRegenType(interviewType);
+    setIsRegenConfirmOpen(true);
+  };
+
+  const handleRegenerateSummary = async (typeOverride?: string, engineOverride?: 'gateway' | 'gemini') => {
+    if (!selectedRecording?.has_transcript) {
+      alert("No transcript available to generate summary from.");
+      return;
+    }
+    const finalType = typeOverride || interviewType;
+    const engine = engineOverride || ((!hasAssemblyKey && allowGemini && !preferAssemblySummary) ? 'gemini' : 'gateway');
+    if (engine === 'gemini' && (!allowGemini || preferAssemblySummary)) {
+      setReportError('Google Gemini is turned off, so this case was not sent to Google.');
+      return;
+    }
+    if (engine === 'gateway' && !hasAssemblyKey) {
+      setReportError(`An AssemblyAI API key is required.${blockedGeminiNote()}`);
+      return;
+    }
+    setIsRegeneratingSummary(true);
+    setReportError(null);
+    try {
+      await saveReport(finalType, selectedRecording, engine);
+      setInterviewType(finalType);
+      const updatedRec = await apiFetch(`/api/recordings/${selectedRecording.id}`);
+      setSelectedRecording(updatedRec);
+    } catch (error: any) {
+      console.error("Failed to regenerate summary:", error);
+      setReportError(`${error.message || error}${engine === 'gateway' ? blockedGeminiNote() : ''}`);
+    } finally {
+      setIsRegeneratingSummary(false);
+    }
+  };
+
   const isWordActive = (word: Word) => {
     const timeMs = currentTime * 1000;
     return timeMs >= word.start && timeMs <= word.end;
@@ -751,6 +1077,15 @@ function AppContent() {
     return wordText.toLowerCase().includes(searchQuery.toLowerCase());
   };
 
+  if (!appReady) {
+    return (
+      <div className="min-h-screen bg-[#0F1115] text-white flex items-center justify-center gap-3">
+        <Loader2 className="animate-spin text-orange-500" />
+        <span className="text-sm text-white/60">Opening the case library…</span>
+      </div>
+    );
+  }
+
   return (
     <div className="flex h-screen bg-[#0F1115] text-white font-sans overflow-hidden">
       {/* Sidebar */}
@@ -759,7 +1094,7 @@ function AppContent() {
           <div className="w-8 h-8 bg-orange-500 rounded-lg flex items-center justify-center">
             <BarChart3 size={18} className="text-white" />
           </div>
-          <h1 className="text-lg font-bold tracking-tight">Narrative.AI</h1>
+          <h1 className="text-lg font-bold tracking-tight">Narrative AI</h1>
         </div>
 
         <div className="p-4 flex-1 overflow-y-auto space-y-2">
@@ -827,9 +1162,7 @@ function AppContent() {
           </button>
           <button 
             onClick={() => {
-              setMode('mass-jail-call');
-              setSelectedCase(null);
-              setSelectedRecording(null);
+              setInfoModalMode('mass-jail-call');
             }}
             className={`w-full flex items-center gap-3 p-3 rounded-xl transition-all ${mode === 'mass-jail-call' ? 'bg-orange-500/10 text-orange-500' : 'hover:bg-white/5 text-white/60'}`}
           >
@@ -838,9 +1171,7 @@ function AppContent() {
           </button>
           <button 
             onClick={() => {
-              setMode('mass-keyword-search');
-              setSelectedCase(null);
-              setSelectedRecording(null);
+              setInfoModalMode('mass-keyword-search');
             }}
             className={`w-full flex items-center gap-3 p-3 rounded-xl transition-all ${mode === 'mass-keyword-search' ? 'bg-orange-500/10 text-orange-500' : 'hover:bg-white/5 text-white/60'}`}
           >
@@ -979,7 +1310,7 @@ function AppContent() {
               initial={{ opacity: 0, scale: 0.95, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="relative w-full max-w-md bg-[#16191E] border border-white/10 rounded-3xl shadow-2xl overflow-hidden"
+              className="relative w-full max-w-3xl bg-[#16191E] border border-white/10 rounded-3xl shadow-2xl overflow-hidden max-h-[92vh] overflow-y-auto"
             >
               <div className="p-8">
                 <div className="flex items-center gap-3 mb-6">
@@ -988,67 +1319,243 @@ function AppContent() {
                   </div>
                   <div>
                     <h3 className="text-xl font-bold">Settings</h3>
-                    <p className="text-xs text-white/40">Configure your application keys</p>
+                    <p className="text-xs text-white/40">Configure application keys and custom prompts</p>
                   </div>
                 </div>
 
-                <div className="space-y-6">
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-bold uppercase tracking-widest text-white/40 px-1">AssemblyAI API Key (Required)</label>
-                    <div className="relative">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                  {/* Left Column: API Keys */}
+                  <div className="space-y-6">
+                    <div className="rounded-xl border border-white/10 bg-black/30 p-4 text-[11px] leading-relaxed text-white/60 space-y-2">
+                      <p className="text-xs font-bold uppercase tracking-widest text-white/80">Where case data goes</p>
+                      <p>Audio is uploaded from this computer to AssemblyAI in the US for transcription. Reports are written by the AssemblyAI LLM Gateway in the US (Claude Sonnet 4.6 by default, gpt-oss-120b if that call fails). The transcript text is sent with the report request. AssemblyAI says gateway providers are opted out of model training. A transcript that is not deleted stays on AssemblyAI until their retention window ends.</p>
+                      <p>After a transcript and report are saved on this computer, Narrative AI deletes the transcript from AssemblyAI. That is on unless you turn it off below.</p>
+                      <p>Case audio, jail calls, timelines, and APOD are not sent to Google unless you turn on Allow Google Gemini. Gemini is not CJIS-approved. Leave it off for criminal justice data.</p>
+                      <p>API keys are encrypted with the operating system credential store and stay in the desktop app. They are not kept in this window. The local server listens only on 127.0.0.1.</p>
+                    </div>
+
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-bold uppercase tracking-widest text-white/40 px-1">AssemblyAI API Key (Required)</label>
                       <input 
                         type="password"
                         value={tempAssemblyKey}
                         onChange={e => setTempAssemblyKey(e.target.value)}
-                        placeholder="Enter your API key"
+                        placeholder={hasAssemblyKey ? 'Key saved on this computer — enter a new key to replace it' : 'Enter your API key'}
+                        autoComplete="off"
                         className="w-full bg-black/20 border border-white/10 rounded-xl px-4 py-3 text-sm focus:border-orange-500 transition-colors outline-none"
                       />
+                      <div className="flex items-center justify-between px-1">
+                        <p className="text-[10px] text-white/30">
+                          {hasAssemblyKey ? 'A key is saved.' : 'No key saved.'} Get one at <a href="https://www.assemblyai.com" target="_blank" rel="noopener noreferrer" className="text-orange-500 hover:underline">assemblyai.com</a>
+                        </p>
+                        {hasAssemblyKey && (
+                          <button type="button" onClick={() => handleClearKey('assemblyai')} className="text-[10px] font-bold uppercase text-red-400">Clear</button>
+                        )}
+                      </div>
                     </div>
-                    <p className="text-[10px] text-white/30 px-1">
-                      Required for transcription. Get one at <a href="https://www.assemblyai.com" target="_blank" rel="noopener noreferrer" className="text-orange-500 hover:underline">assemblyai.com</a>
-                    </p>
-                  </div>
 
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-bold uppercase tracking-widest text-white/40 px-1">Gemini API Key (Optional)</label>
-                    <div className="relative">
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-bold uppercase tracking-widest text-white/40 px-1">Gemini API Key (Optional)</label>
                       <input 
                         type="password"
                         value={tempGeminiKey}
                         onChange={e => setTempGeminiKey(e.target.value)}
-                        placeholder="Enter your Gemini API key"
+                        placeholder={hasGeminiKey ? 'Key saved on this computer — enter a new key to replace it' : 'Enter your Gemini API key'}
+                        autoComplete="off"
                         className="w-full bg-black/20 border border-white/10 rounded-xl px-4 py-3 text-sm focus:border-orange-500 transition-colors outline-none"
                       />
+                      <div className="flex items-center justify-between px-1">
+                        <p className="text-[10px] text-white/30">{hasGeminiKey ? 'A key is saved.' : 'No key saved.'}</p>
+                        {hasGeminiKey && (
+                          <button type="button" onClick={() => handleClearKey('gemini')} className="text-[10px] font-bold uppercase text-red-400">Clear</button>
+                        )}
+                      </div>
                     </div>
-                    <p className="text-[10px] text-white/30 px-1">
-                      Used for advanced forensic analysis (APOD). Get one at <a href="https://aistudio.google.com" target="_blank" rel="noopener noreferrer" className="text-orange-500 hover:underline">AI Studio</a>
-                    </p>
+
+                    <div className="flex items-center justify-between p-4 bg-amber-500/10 border border-amber-500/30 rounded-xl">
+                      <div>
+                        <p className="text-sm font-bold">Allow Google Gemini (not CJIS-approved)</p>
+                        <p className="text-[10px] text-white/50">Off by default. Turns on Gemini for reports, mass jail calls, the case timeline, and APOD. Leave this off for criminal justice data.</p>
+                      </div>
+                      <button 
+                        onClick={() => setTempAllowGemini(!tempAllowGemini)}
+                        className={`w-12 h-6 rounded-full transition-all relative shrink-0 ${tempAllowGemini ? 'bg-amber-500' : 'bg-white/10'}`}
+                      >
+                        <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${tempAllowGemini ? 'left-7' : 'left-1'}`} />
+                      </button>
+                    </div>
+
+                    <div className="flex items-center justify-between p-4 bg-black/20 border border-white/10 rounded-xl">
+                      <div>
+                        <p className="text-sm font-bold">Delete AssemblyAI transcripts after save</p>
+                        <p className="text-[10px] text-white/40">On by default. Deletes the transcript from AssemblyAI after it and the report are stored on this computer. Success and failure are written to the log and the database.</p>
+                      </div>
+                      <button 
+                        onClick={() => setTempDeleteRemote(!tempDeleteRemote)}
+                        className={`w-12 h-6 rounded-full transition-all relative shrink-0 ${tempDeleteRemote ? 'bg-orange-500' : 'bg-white/10'}`}
+                      >
+                        <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${tempDeleteRemote ? 'left-7' : 'left-1'}`} />
+                      </button>
+                    </div>
+
+                    <div className="flex items-center justify-between p-4 bg-black/20 border border-white/10 rounded-xl">
+                      <div>
+                        <p className="text-sm font-bold">Strictly Use AssemblyAI Summaries</p>
+                        <p className="text-[10px] text-white/40">Disable Gemini fallback to avoid safety filter refusals on sensitive material.</p>
+                      </div>
+                      <button 
+                        onClick={() => setTempPreferAssembly(!tempPreferAssembly)}
+                        className={`w-12 h-6 rounded-full transition-all relative ${tempPreferAssembly ? 'bg-orange-500' : 'bg-white/10'}`}
+                      >
+                        <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${tempPreferAssembly ? 'left-7' : 'left-1'}`} />
+                      </button>
+                    </div>
+
+                    <div className="flex items-center justify-between p-4 bg-black/20 border border-white/10 rounded-xl">
+                      <div>
+                        <p className="text-sm font-bold">Local Offline Transcription (Whisper)</p>
+                        <p className="text-[10px] text-white/40">Transcribe on this computer. Reports still use the AssemblyAI gateway unless you enable Gemini.</p>
+                      </div>
+                      <button 
+                        onClick={() => setTempLocalWhisper(!tempLocalWhisper)}
+                        className={`w-12 h-6 rounded-full transition-all relative ${tempLocalWhisper ? 'bg-orange-500' : 'bg-white/10'}`}
+                      >
+                        <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${tempLocalWhisper ? 'left-7' : 'left-1'}`} />
+                      </button>
+                    </div>
+
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-bold uppercase tracking-widest text-white/40 px-1">Default Gateway Model</label>
+                      <select
+                        value={tempGatewayModel}
+                        onChange={e => setTempGatewayModel(e.target.value)}
+                        className="w-full bg-black/20 border border-white/10 rounded-xl px-4 py-3 text-sm text-white focus:border-orange-500 transition-colors outline-none cursor-pointer"
+                      >
+                        <option value="claude-sonnet-4-6">claude-sonnet-4-6 (Recommended for formal reports)</option>
+                        <option value="gpt-oss-120b">gpt-oss-120b (Fewest refusals; reasoning text is stripped automatically)</option>
+                      </select>
+                      <p className="text-[10px] text-white/30 px-1">
+                        The other model is used automatically if the selected model returns an error.
+                      </p>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-bold uppercase tracking-widest text-white/40 px-1">Officer name</label>
+                        <input value={tempOfficerName} onChange={e => setTempOfficerName(e.target.value)} className="w-full bg-black/20 border border-white/10 rounded-xl px-3 py-2 text-sm outline-none focus:border-orange-500" />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-bold uppercase tracking-widest text-white/40 px-1">Badge</label>
+                        <input value={tempOfficerBadge} onChange={e => setTempOfficerBadge(e.target.value)} className="w-full bg-black/20 border border-white/10 rounded-xl px-3 py-2 text-sm outline-none focus:border-orange-500" />
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-bold uppercase tracking-widest text-white/40 px-1">AssemblyAI API base (US default)</label>
+                      <input value={tempApiBase} onChange={e => setTempApiBase(e.target.value)} className="w-full bg-black/20 border border-white/10 rounded-xl px-3 py-2 text-xs outline-none focus:border-orange-500" />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-bold uppercase tracking-widest text-white/40 px-1">LLM Gateway URL (US default)</label>
+                      <input value={tempGatewayUrl} onChange={e => setTempGatewayUrl(e.target.value)} className="w-full bg-black/20 border border-white/10 rounded-xl px-3 py-2 text-xs outline-none focus:border-orange-500" />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-bold uppercase tracking-widest text-white/40 px-1">Split transcripts over this many tokens</label>
+                      <input value={tempChunkLimit} onChange={e => setTempChunkLimit(e.target.value)} className="w-full bg-black/20 border border-white/10 rounded-xl px-3 py-2 text-sm outline-none focus:border-orange-500" />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-bold uppercase tracking-widest text-white/40 px-1">Mass processing at once</label>
+                      <input value={tempMassConcurrency} onChange={e => setTempMassConcurrency(e.target.value)} className="w-full bg-black/20 border border-white/10 rounded-xl px-3 py-2 text-sm outline-none focus:border-orange-500" />
+                      <p className="text-[10px] text-white/30 px-1">How many jail calls or keyword files run together. 1 to 4. Default 2.</p>
+                    </div>
+                    <div className="space-y-2 rounded-xl border border-white/10 p-4">
+                      <p className="text-sm font-bold">Test my keys</p>
+                      <p className="text-[10px] text-white/40">Checks the saved key with a short authenticated call. The key is not shown or written to the log. Gemini is tested only when it is enabled.</p>
+                      <div className="flex flex-wrap gap-2">
+                        <button type="button" disabled={isTestingKeys} onClick={() => handleTestKey('assemblyai')} className="px-3 py-2 rounded-lg bg-white/10 text-xs font-bold disabled:opacity-50">Test AssemblyAI</button>
+                        <button type="button" disabled={isTestingKeys || !tempAllowGemini} onClick={() => handleTestKey('gemini')} className="px-3 py-2 rounded-lg bg-white/10 text-xs font-bold disabled:opacity-50">Test Gemini</button>
+                      </div>
+                      {keyTestMessage && <p className="text-[11px] text-white/70">{keyTestMessage}</p>}
+                    </div>
+                    <div className="space-y-2 rounded-xl border border-white/10 p-4">
+                      <p className="text-sm font-bold">Advanced: sample check</p>
+                      <p className="text-[10px] text-white/40">Runs synthetic recordings through the report pipeline with mocked model output. It does not call AssemblyAI.</p>
+                      <button type="button" disabled={isRegressing} onClick={handleRegress} className="px-3 py-2 rounded-lg bg-white/10 text-xs font-bold disabled:opacity-50">
+                        {isRegressing ? 'Running…' : 'Run sample check'}
+                      </button>
+                      {regressMessage && <p className="text-[11px] text-white/70">{regressMessage}</p>}
+                    </div>
+                    <div className="space-y-2 rounded-xl border border-white/10 p-4">
+                      <p className="text-sm font-bold">Clean existing reports</p>
+                      <p className="text-[10px] text-white/40">Backs up the database, then runs the report cleaner over saved summaries and case timelines.</p>
+                      <button type="button" onClick={handleCleanReports} disabled={isCleaning} className="px-3 py-2 rounded-lg bg-white/10 text-xs font-bold disabled:opacity-50">
+                        {isCleaning ? 'Cleaning…' : 'Clean existing reports'}
+                      </button>
+                      {cleanMessage && <p className="text-[11px] text-white/70 break-all">{cleanMessage}</p>}
+                    </div>
                   </div>
 
-                  <div className="flex items-center justify-between p-4 bg-black/20 border border-white/10 rounded-xl">
-                    <div>
-                      <p className="text-sm font-bold">Strictly Use AssemblyAI Summaries</p>
-                      <p className="text-[10px] text-white/40">Disable Gemini fallback to avoid safety filter refusals on sensitive material.</p>
+                  {/* Right Column: Custom Prompts */}
+                  <div className="flex flex-col border-l border-white/10 pl-0 md:pl-8 space-y-4">
+                    <label className="text-[10px] font-bold uppercase tracking-widest text-white/40 px-1">Custom Investigative Prompts</label>
+                    
+                    {/* List of custom prompts */}
+                    <div className="flex-1 max-h-48 overflow-y-auto space-y-2 pr-2">
+                      {Object.keys(customPrompts).length === 0 ? (
+                        <p className="text-xs text-white/30 italic p-3 text-center bg-black/10 rounded-xl">No custom prompts created yet.</p>
+                      ) : (
+                        Object.entries(customPrompts).map(([name, text]) => (
+                          <div key={name} className="flex items-start justify-between gap-3 p-3 bg-black/20 border border-white/5 rounded-xl text-xs">
+                            <div className="min-w-0 flex-1">
+                              <p className="font-bold text-orange-500 truncate">{name}</p>
+                              <p className="text-[10px] text-white/50 line-clamp-2 mt-0.5" title={text}>{text}</p>
+                            </div>
+                            <button 
+                              onClick={() => handleDeletePrompt(name)}
+                              className="text-red-500 hover:text-red-400 p-1 rounded hover:bg-white/5 transition-colors shrink-0"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
+                        ))
+                      )}
                     </div>
-                    <button 
-                      onClick={() => setTempPreferAssembly(!tempPreferAssembly)}
-                      className={`w-12 h-6 rounded-full transition-all relative ${tempPreferAssembly ? 'bg-orange-500' : 'bg-white/10'}`}
-                    >
-                      <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${tempPreferAssembly ? 'left-7' : 'left-1'}`} />
-                    </button>
+
+                    {/* Add form */}
+                    <div className="space-y-3 pt-3 border-t border-white/10">
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-white/40">Add Custom Template</p>
+                      <input 
+                        type="text"
+                        placeholder="Prompt Title (e.g. Field Report)"
+                        value={newPromptName}
+                        onChange={e => setNewPromptName(e.target.value)}
+                        className="w-full bg-black/20 border border-white/10 rounded-xl px-3 py-2 text-xs focus:border-orange-500 outline-none placeholder:text-white/20 text-white"
+                      />
+                      <textarea 
+                        placeholder="Describe template focus: 'Analyze field stop details, suspect identity claims, and officer orders...'"
+                        value={newPromptText}
+                        onChange={e => setNewPromptText(e.target.value)}
+                        rows={3}
+                        className="w-full bg-black/20 border border-white/10 rounded-xl px-3 py-2 text-xs focus:border-orange-500 outline-none resize-none placeholder:text-white/20 text-white"
+                      />
+                      <button 
+                        onClick={handleAddPrompt}
+                        className="w-full py-2 bg-orange-500 hover:bg-orange-600 rounded-xl text-xs font-bold transition-all"
+                      >
+                        Add Custom Prompt
+                      </button>
+                    </div>
                   </div>
                 </div>
 
-                <div className="flex gap-3 mt-10">
+                <div className="flex gap-3 mt-8 justify-end">
                   <button 
                     onClick={() => setIsSettingsOpen(false)}
-                    className="flex-1 px-4 py-3 rounded-xl font-bold text-sm bg-white/5 hover:bg-white/10 transition-all"
+                    className="px-6 py-2.5 rounded-xl font-bold text-sm bg-white/5 hover:bg-white/10 transition-all"
                   >
                     Cancel
                   </button>
                   <button 
                     onClick={handleSaveSettings}
-                    className="flex-1 px-4 py-3 rounded-xl font-bold text-sm bg-orange-500 hover:bg-orange-600 transition-all shadow-lg shadow-orange-500/20"
+                    className="px-6 py-2.5 rounded-xl font-bold text-sm bg-orange-500 hover:bg-orange-600 transition-all shadow-lg shadow-orange-500/20"
                   >
                     Save Changes
                   </button>
@@ -1111,8 +1618,249 @@ function AppContent() {
         )}
       </AnimatePresence>
 
+      {/* Regenerate Confirmation Modal */}
+      <AnimatePresence>
+        {isRegenConfirmOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setIsRegenConfirmOpen(false)}
+              className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="relative w-full max-w-md bg-[#16191E] border border-white/10 rounded-3xl shadow-2xl overflow-hidden"
+            >
+              <div className="p-8">
+                <div className="flex items-center gap-3 mb-6">
+                  <div className="w-10 h-10 bg-orange-500/10 rounded-xl flex items-center justify-center">
+                    <FileText size={20} className="text-orange-500" />
+                  </div>
+                  <div>
+                    <h3 className="text-xl font-bold">Regenerate Summary</h3>
+                    <p className="text-xs text-white/40">Select the analysis template</p>
+                  </div>
+                </div>
+
+                <div className="space-y-4 mb-8">
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-bold uppercase tracking-widest text-white/40 px-1">Analysis Profile Template</label>
+                    <select
+                      value={tempRegenType}
+                      onChange={e => setTempRegenType(e.target.value)}
+                      className="w-full bg-black/20 border border-white/10 rounded-xl px-4 py-3 text-sm text-white focus:border-orange-500 transition-colors outline-none cursor-pointer"
+                    >
+                      {Object.keys(INTERVIEW_PROMPTS).map(p => (
+                        <option key={p} value={p}>{p}</option>
+                      ))}
+                      {Object.keys(customPrompts).map(p => (
+                        <option key={p} value={p}>{p} (Custom)</option>
+                      ))}
+                    </select>
+                  </div>
+                  <p className="text-xs text-white/40 leading-relaxed px-1">
+                    This will regenerate the chronological narrative report. Existing summary data for this recording will be replaced.
+                  </p>
+                </div>
+
+                <div className="flex gap-3">
+                  <button 
+                    onClick={() => setIsRegenConfirmOpen(false)}
+                    className="flex-1 px-4 py-3 rounded-xl font-bold text-sm bg-white/5 hover:bg-white/10 transition-all text-white"
+                  >
+                    Cancel
+                  </button>
+                  <button 
+                    onClick={async () => {
+                      setIsRegenConfirmOpen(false);
+                      setInterviewType(tempRegenType);
+                      await handleRegenerateSummary(tempRegenType);
+                    }}
+                    className="flex-1 px-4 py-3 rounded-xl font-bold text-sm bg-orange-500 hover:bg-orange-600 transition-all text-white shadow-lg shadow-orange-500/20"
+                  >
+                    Regenerate
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Mass Tools Instruction Modal */}
+      <AnimatePresence>
+        {infoModalMode && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setInfoModalMode(null)}
+              className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="relative w-full max-w-lg bg-[#16191E] border border-white/10 rounded-3xl shadow-2xl overflow-hidden text-white"
+            >
+              <div className="p-8">
+                <div className="flex items-center gap-3 mb-6">
+                  <div className="w-10 h-10 bg-orange-500/10 rounded-xl flex items-center justify-center">
+                    {infoModalMode === 'mass-jail-call' ? (
+                      <BarChart3 size={20} className="text-orange-500" />
+                    ) : (
+                      <Search size={20} className="text-orange-500" />
+                    )}
+                  </div>
+                  <div>
+                    <h3 className="text-xl font-bold">
+                      {infoModalMode === 'mass-jail-call' ? 'Mass Jail Call Processing' : 'Mass Keyword Search'}
+                    </h3>
+                    <p className="text-xs text-white/40">Instructions & Options Guide</p>
+                  </div>
+                </div>
+
+                <div className="space-y-6 text-sm text-white/70 mb-8 leading-relaxed">
+                  {infoModalMode === 'mass-jail-call' ? (
+                    <>
+                      <p>
+                        The <strong className="text-white">Mass Jail Call Processing</strong> module is designed to analyze multiple inmate recordings simultaneously, automating review of volume call files.
+                      </p>
+                      <div className="space-y-3 bg-white/5 p-5 rounded-2xl border border-white/5">
+                        <h4 className="text-[10px] font-bold uppercase tracking-widest text-orange-500 mb-2">Options to Apply:</h4>
+                        
+                        <label className="flex items-start gap-3 cursor-pointer group">
+                          <input 
+                            type="checkbox" 
+                            checked={jailCallQueue} 
+                            onChange={e => setJailCallQueue(e.target.checked)}
+                            className="mt-1 rounded bg-[#16191E] border border-white/10 text-orange-500 focus:ring-0 focus:ring-offset-0 focus:outline-none w-4 h-4 cursor-pointer"
+                          />
+                          <div className="text-xs">
+                            <span className="font-bold text-white group-hover:text-orange-500 transition-colors">Bulk Upload & Queue</span>
+                            <p className="text-white/40 mt-0.5">Drop multiple audio/video files (MP3, WAV, MP4, etc.) to queue them for processing.</p>
+                          </div>
+                        </label>
+
+                        <label className="flex items-start gap-3 cursor-pointer group pt-2 border-t border-white/5">
+                          <input 
+                            type="checkbox" 
+                            checked={jailCallTranscribe} 
+                            onChange={e => setJailCallTranscribe(e.target.checked)}
+                            className="mt-1 rounded bg-[#16191E] border border-white/10 text-orange-500 focus:ring-0 focus:ring-offset-0 focus:outline-none w-4 h-4 cursor-pointer"
+                          />
+                          <div className="text-xs">
+                            <span className="font-bold text-white group-hover:text-orange-500 transition-colors">Universal Transcription</span>
+                            <p className="text-white/40 mt-0.5">Transcribe each call in parallel using AssemblyAI's latest universal-3-5-pro and universal-2 accuracy models.</p>
+                          </div>
+                        </label>
+
+                        <label className="flex items-start gap-3 cursor-pointer group pt-2 border-t border-white/5">
+                          <input 
+                            type="checkbox" 
+                            checked={jailCallSummarize} 
+                            onChange={e => setJailCallSummarize(e.target.checked)}
+                            className="mt-1 rounded bg-[#16191E] border border-white/10 text-orange-500 focus:ring-0 focus:ring-offset-0 focus:outline-none w-4 h-4 cursor-pointer"
+                          />
+                          <div className="text-xs">
+                            <span className="font-bold text-white group-hover:text-orange-500 transition-colors">Intelligence Summary</span>
+                            <p className="text-white/40 mt-0.5">Automatically extract significant statements, admissions, mentioned entities (people, places, numbers), and case leads.</p>
+                          </div>
+                        </label>
+                      </div>
+                      <div className="space-y-2 bg-orange-500/5 p-4 rounded-2xl border border-orange-500/10 text-xs">
+                        <h4 className="font-bold text-orange-500">Prerequisites:</h4>
+                        <p>Requires an active <strong className="text-white">AssemblyAI API Key</strong> in Settings.</p>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <p>
+                        The <strong className="text-white">Mass Keyword Search</strong> module transcribes and automatically scans multiple recordings to search for specific words, codes, names, or drug terminologies.
+                      </p>
+                      <div className="space-y-3 bg-white/5 p-5 rounded-2xl border border-white/5">
+                        <h4 className="text-[10px] font-bold uppercase tracking-widest text-orange-500 mb-2">Options to Apply:</h4>
+                        
+                        <label className="flex items-start gap-3 cursor-pointer group">
+                          <input 
+                            type="checkbox" 
+                            checked={keywordBoost} 
+                            onChange={e => setKeywordBoost(e.target.checked)}
+                            className="mt-1 rounded bg-[#16191E] border border-white/10 text-orange-500 focus:ring-0 focus:ring-offset-0 focus:outline-none w-4 h-4 cursor-pointer"
+                          />
+                          <div className="text-xs">
+                            <span className="font-bold text-white group-hover:text-orange-500 transition-colors">Keyword Boosting</span>
+                            <p className="text-white/40 mt-0.5">Provide a comma-separated list of target keywords. The transcription engine increases speech recognition sensitivity for these specific terms.</p>
+                          </div>
+                        </label>
+
+                        <label className="flex items-start gap-3 cursor-pointer group pt-2 border-t border-white/5">
+                          <input 
+                            type="checkbox" 
+                            checked={keywordTranscribe} 
+                            onChange={e => setKeywordTranscribe(e.target.checked)}
+                            className="mt-1 rounded bg-[#16191E] border border-white/10 text-orange-500 focus:ring-0 focus:ring-offset-0 focus:outline-none w-4 h-4 cursor-pointer"
+                          />
+                          <div className="text-xs">
+                            <span className="font-bold text-white group-hover:text-orange-500 transition-colors">Parallel Transcription</span>
+                            <p className="text-white/40 mt-0.5">Audio files are transcribed using AssemblyAI's Universal model suite.</p>
+                          </div>
+                        </label>
+
+                        <label className="flex items-start gap-3 cursor-pointer group pt-2 border-t border-white/5">
+                          <input 
+                            type="checkbox" 
+                            checked={keywordContext} 
+                            onChange={e => setKeywordContext(e.target.checked)}
+                            className="mt-1 rounded bg-[#16191E] border border-white/10 text-orange-500 focus:ring-0 focus:ring-offset-0 focus:outline-none w-4 h-4 cursor-pointer"
+                          />
+                          <div className="text-xs">
+                            <span className="font-bold text-white group-hover:text-orange-500 transition-colors">Contextual Matches</span>
+                            <p className="text-white/40 mt-0.5">The system automatically extracts exact timestamps and snippets showing the context of when each keyword was spoken.</p>
+                          </div>
+                        </label>
+                      </div>
+                      <div className="space-y-2 bg-orange-500/5 p-4 rounded-2xl border border-orange-500/10 text-xs">
+                        <h4 className="font-bold text-orange-500">Prerequisites:</h4>
+                        <p>Requires entering one or more comma-separated target keywords before processing, and a valid <strong className="text-white">AssemblyAI API Key</strong> in Settings.</p>
+                      </div>
+                    </>
+                  )}
+                </div>
+
+                <div className="flex gap-3">
+                  <button 
+                    onClick={() => setInfoModalMode(null)}
+                    className="flex-1 px-4 py-3 rounded-xl font-bold text-sm bg-white/5 hover:bg-white/10 transition-all text-white border border-white/5"
+                  >
+                    Cancel
+                  </button>
+                  <button 
+                    onClick={() => {
+                      const targetMode = infoModalMode;
+                      setInfoModalMode(null);
+                      setMode(targetMode);
+                      setSelectedCase(null);
+                      setSelectedRecording(null);
+                    }}
+                    className="flex-1 px-4 py-3 rounded-xl font-bold text-sm bg-orange-500 hover:bg-orange-600 transition-all text-white shadow-lg shadow-orange-500/20"
+                  >
+                    Proceed to Module
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
       {/* Main Content */}
-      <div className="flex-1 flex flex-col min-w-0">
+      <div className="flex-1 flex flex-col min-w-0 min-h-0">
         {mode === 'statistics' ? (
           <div className="flex-1 flex flex-col p-8 overflow-y-auto">
             <div className="max-w-5xl mx-auto w-full space-y-8">
@@ -1129,7 +1877,21 @@ function AppContent() {
             </div>
           </div>
         ) : mode !== 'cases' ? (
-          <MassProcessingView mode={mode as any} assemblyKey={assemblyKey} geminiKey={geminiKey} preferAssemblySummary={preferAssemblySummary} />
+          <MassProcessingView 
+            mode={mode as any} 
+            preferAssemblySummary={preferAssemblySummary}
+            allowGemini={allowGemini}
+            gatewayModel={gatewayModel}
+            hasAssemblyKey={hasAssemblyKey}
+            hasGeminiKey={hasGeminiKey}
+            massConcurrency={massConcurrency}
+            jailCallQueue={jailCallQueue}
+            jailCallTranscribe={jailCallTranscribe}
+            jailCallSummarize={jailCallSummarize}
+            keywordBoost={keywordBoost}
+            keywordTranscribe={keywordTranscribe}
+            keywordContext={keywordContext}
+          />
         ) : !selectedCase ? (
           <div className="flex-1 flex flex-col items-center justify-center opacity-20">
             <FolderOpen size={64} strokeWidth={1} />
@@ -1152,12 +1914,15 @@ function AppContent() {
                   <Trash2 size={18} />
                 </button>
                 <select 
-                  className="bg-[#16191E] border border-white/10 rounded-lg text-xs px-3 py-2 outline-none focus:border-orange-500 transition-colors"
+                  className="bg-[#16191E] border border-white/10 rounded-lg text-xs px-3 py-2 outline-none focus:border-orange-500 transition-colors max-w-[200px] truncate"
                   value={interviewType}
                   onChange={e => setInterviewType(e.target.value)}
                 >
                   {Object.keys(INTERVIEW_PROMPTS).map(p => (
                     <option key={p} value={p}>{p}</option>
+                  ))}
+                  {Object.keys(customPrompts).map(p => (
+                    <option key={p} value={p}>{p} (Custom)</option>
                   ))}
                 </select>
                 <div {...getRootProps()} className={`px-4 py-2 rounded-lg border border-dashed border-white/20 hover:border-orange-500/50 hover:bg-orange-500/5 transition-all cursor-pointer flex items-center gap-2 text-sm ${isUploading ? 'opacity-50 pointer-events-none' : ''}`}>
@@ -1168,9 +1933,20 @@ function AppContent() {
               </div>
             </div>
 
-            <div className="flex-1 flex overflow-hidden">
+            <div className="flex-1 flex overflow-hidden min-h-0">
               {/* Recordings List */}
               <div className="w-64 border-r border-white/10 overflow-y-auto p-4 space-y-3">
+                <button
+                  onClick={() => {
+                    setSelectedRecording(null);
+                    fetchCaseTimeline(selectedCase.id);
+                  }}
+                  className={`w-full text-left p-3 rounded-xl transition-all border flex items-center gap-2 ${!selectedRecording ? 'bg-orange-500/10 border-orange-500/30 text-orange-500 font-bold' : 'border-transparent hover:bg-white/5 opacity-70'}`}
+                >
+                  <Calendar size={14} className={!selectedRecording ? "text-orange-500" : "text-white/40"} />
+                  <span className="text-xs uppercase tracking-wider">Case Timeline</span>
+                </button>
+                <div className="border-t border-white/5 my-2" />
                 <span className="text-[10px] font-bold uppercase tracking-widest text-white/30 px-2">Recordings</span>
                 {selectedCase.recordings?.map(r => (
                   <button 
@@ -1191,7 +1967,7 @@ function AppContent() {
               </div>
 
               {/* Viewer Area */}
-              <div className="flex-1 flex flex-col min-w-0 bg-[#0F1115]">
+              <div className="flex-1 flex flex-col min-w-0 min-h-0 bg-[#0F1115]">
                 {selectedRecording ? (
                   <>
                     {/* Media Player */}
@@ -1310,19 +2086,32 @@ function AppContent() {
                           </button>
                         )}
                       </div>
-                      {selectedRecording.summary && selectedRecording.transcript && (
-                        <button 
-                          onClick={handleExportDocx}
-                          className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-orange-500/10 text-orange-500 hover:bg-orange-500/20 transition-all text-[10px] font-bold uppercase tracking-wider"
-                        >
-                          <Download size={14} />
-                          Export DOCX
-                        </button>
-                      )}
+                      <div className="flex items-center gap-2">
+                        {selectedRecording.has_transcript && (
+                          <button 
+                            onClick={triggerRegeneratePrompt}
+                            disabled={isRegeneratingSummary}
+                            className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-orange-500 text-white hover:bg-orange-600 transition-all text-[10px] font-bold uppercase tracking-wider disabled:opacity-50"
+                            title="Generate or regenerate full Officer Narrative summary"
+                          >
+                            {isRegeneratingSummary ? <Loader2 size={14} className="animate-spin" /> : <FileText size={14} />}
+                            <span>{isRegeneratingSummary ? 'Generating...' : 'Regenerate Narrative'}</span>
+                          </button>
+                        )}
+                        {selectedRecording.summary && selectedRecording.has_transcript && (
+                          <button 
+                            onClick={handleExportDocx}
+                            className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-orange-500/10 text-orange-500 hover:bg-orange-500/20 transition-all text-[10px] font-bold uppercase tracking-wider"
+                          >
+                            <Download size={14} />
+                            Export DOCX
+                          </button>
+                        )}
+                      </div>
                     </div>
 
                     {/* Tab Content */}
-                    <div className="flex-1 overflow-y-auto p-6">
+                    <div className="flex-1 min-h-0 overflow-y-auto p-6">
                       <AnimatePresence mode="wait">
                         {activeTab === 'transcript' && (
                           <motion.div 
@@ -1332,7 +2121,7 @@ function AppContent() {
                             exit={{ opacity: 0, y: -10 }}
                             className="max-w-3xl mx-auto space-y-8"
                           >
-                            {!selectedRecording.transcript ? (
+                            {!selectedRecording.has_transcript ? (
                               <div className="flex flex-col items-center justify-center py-20 border-2 border-dashed border-white/5 rounded-3xl">
                                 <FileText size={48} className="text-white/10 mb-4" />
                                 <p className="text-white/40 mb-6">No transcript available for this recording</p>
@@ -1363,104 +2152,14 @@ function AppContent() {
                                 )}
                               </div>
                             ) : (
-                              <div className="space-y-6">
-                                <div className="sticky top-0 z-20 bg-[#0F1115] pb-4 border-b border-white/5 mb-6">
-                                  <div className="relative">
-                                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-white/20" size={16} />
-                                    <input 
-                                      type="text"
-                                      placeholder="Search keywords in transcript..."
-                                      className="w-full bg-white/5 border border-white/10 rounded-xl py-2.5 pl-10 pr-4 text-sm focus:outline-none focus:border-orange-500/50 transition-colors placeholder:text-white/10"
-                                      value={searchQuery}
-                                      onChange={e => setSearchQuery(e.target.value)}
-                                    />
-                                    {searchQuery && (
-                                      <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-3">
-                                        <div className="text-[10px] font-bold uppercase tracking-widest text-orange-500 bg-orange-500/10 px-2 py-1 rounded-md">
-                                          {selectedRecording.transcript.utterances?.reduce((acc, u) => {
-                                            const matches = u.text.match(new RegExp(searchQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'));
-                                            return acc + (matches ? matches.length : 0);
-                                          }, 0)} matches
-                                        </div>
-                                        <button 
-                                          onClick={() => setSearchQuery('')}
-                                          className="text-white/20 hover:text-white/60 transition-colors"
-                                        >
-                                          <Plus size={14} className="rotate-45" />
-                                        </button>
-                                      </div>
-                                    )}
-                                  </div>
-                                </div>
-
-                                {selectedRecording.transcript.utterances?.map((u, i) => (
-                                  <div key={i} className="group">
-                                    <div className="flex items-center gap-3 mb-2">
-                                      <div className="flex items-center gap-2">
-                                        <User size={14} className="text-orange-500" />
-                                        <input 
-                                          className="bg-transparent border-none focus:ring-0 text-xs font-bold uppercase tracking-wider p-0 w-32 text-orange-500"
-                                          value={speakerLabels[u.speaker] || `Speaker ${u.speaker}`}
-                                          onChange={e => {
-                                            setSpeakerLabels({ ...speakerLabels, [u.speaker]: e.target.value });
-                                          }}
-                                          onBlur={saveSpeakerLabels}
-                                        />
-                                      </div>
-                                      <span className="text-[10px] font-mono opacity-30">{formatTime(u.start / 1000)}</span>
-                                    </div>
-                                    <div className="relative group/text">
-                                      <p 
-                                        contentEditable
-                                        suppressContentEditableWarning
-                                        onBlur={async (e) => {
-                                          const newText = e.currentTarget.innerText;
-                                          if (newText === u.text) return;
-                                          
-                                          const newUtterances = [...(selectedRecording.transcript?.utterances || [])];
-                                          newUtterances[i] = { ...u, text: newText };
-                                          
-                                          await fetch(`/api/recordings/${selectedRecording.id}`, {
-                                            method: 'PATCH',
-                                            headers: { 'Content-Type': 'application/json' },
-                                            body: JSON.stringify({ 
-                                              transcript: { 
-                                                ...selectedRecording.transcript, 
-                                                utterances: newUtterances 
-                                              } 
-                                            }),
-                                          });
-                                          setSelectedRecording({
-                                            ...selectedRecording,
-                                            transcript: { ...selectedRecording.transcript!, utterances: newUtterances }
-                                          });
-                                        }}
-                                        className="text-lg leading-relaxed text-white/80 font-light outline-none focus:bg-white/5 rounded p-1 transition-colors"
-                                      >
-                                        {u.words?.map((w, wi) => (
-                                          <span 
-                                            key={wi}
-                                            onClick={(e) => {
-                                              if (e.ctrlKey || e.metaKey) {
-                                                seekTo(w.start / 1000);
-                                              }
-                                            }}
-                                            className={`transition-all rounded px-0.5 ${
-                                              isWordActive(w) 
-                                                ? 'bg-orange-500 text-white shadow-[0_0_15px_rgba(249,115,22,0.5)]' 
-                                                : isWordHighlighted(w.text)
-                                                  ? 'bg-yellow-500/40 text-white ring-1 ring-yellow-500/50'
-                                                  : 'hover:bg-white/10'
-                                            }`}
-                                          >
-                                            {w.text}{' '}
-                                          </span>
-                                        ))}
-                                      </p>
-                                    </div>
-                                  </div>
-                                ))}
-                              </div>
+                              <TranscriptList
+                                recordingId={selectedRecording.id}
+                                speakerLabels={speakerLabels}
+                                onSpeakerLabel={(speaker, name) => setSpeakerLabels({ ...speakerLabels, [speaker]: name })}
+                                onSaveLabels={saveSpeakerLabels}
+                                currentTimeMs={currentTime * 1000}
+                                onSeek={seekTo}
+                              />
                             )}
                           </motion.div>
                         )}
@@ -1471,18 +2170,122 @@ function AppContent() {
                             initial={{ opacity: 0, y: 10 }}
                             animate={{ opacity: 1, y: 0 }}
                             exit={{ opacity: 0, y: -10 }}
-                            className="max-w-3xl mx-auto"
+                            className="max-w-5xl mx-auto space-y-6"
                           >
                             {selectedRecording.summary ? (
-                              <div className="prose prose-invert prose-orange max-w-none">
-                                <ReactMarkdown>
-                                  {typeof selectedRecording.summary === 'string' ? selectedRecording.summary : ''}
-                                </ReactMarkdown>
+                              <div className="space-y-6">
+                                <div className="flex flex-wrap items-center justify-between gap-4 p-4 bg-orange-500/10 border border-orange-500/20 rounded-2xl">
+                                  <div className="flex items-center gap-3">
+                                    <FileText className="text-orange-500 shrink-0" size={22} />
+                                    <div>
+                                      <p className="text-xs font-bold uppercase tracking-wider text-orange-500">Officer Narrative & Case Analysis Report</p>
+                                      <p className="text-[10px] text-white/50">Full chronological narrative generated for law enforcement documentation</p>
+                                    </div>
+                                  </div>
+                                  <div className="flex items-center flex-wrap gap-2">
+                                    <button 
+                                      onClick={handleCopySummary}
+                                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-semibold transition-all border border-white/10"
+                                      title="Copy complete narrative text to clipboard for RMS or reports"
+                                    >
+                                      {copySuccess ? <Check size={14} className="text-green-400" /> : <Copy size={14} />}
+                                      <span>{copySuccess ? 'Copied!' : 'Copy Text'}</span>
+                                    </button>
+                                    <button 
+                                      onClick={handlePrintReport}
+                                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-semibold transition-all border border-white/10"
+                                      title="Print the report"
+                                    >
+                                      <Printer size={14} />
+                                      <span>Print</span>
+                                    </button>
+                                    <button 
+                                      onClick={handleExportPdf}
+                                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-semibold transition-all border border-white/10"
+                                      title="Save a PDF from the desktop app"
+                                    >
+                                      <Download size={14} />
+                                      <span>Export PDF</span>
+                                    </button>
+                                    <button 
+                                      onClick={() => setIsSummaryExpanded(true)}
+                                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-semibold transition-all border border-white/10"
+                                      title="Open full-screen reader"
+                                    >
+                                      <Maximize2 size={14} />
+                                      <span>Fullscreen View</span>
+                                    </button>
+                                    <button 
+                                      onClick={triggerRegeneratePrompt}
+                                      disabled={isRegeneratingSummary}
+                                      className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-orange-500 text-white text-xs font-bold hover:bg-orange-600 transition-all disabled:opacity-50 shadow-md shadow-orange-500/20"
+                                    >
+                                      {isRegeneratingSummary ? <Loader2 size={14} className="animate-spin" /> : <FileText size={14} />}
+                                      <span>{isRegeneratingSummary ? 'Generating...' : 'Regenerate Narrative'}</span>
+                                    </button>
+                                  </div>
+                                </div>
+
+                                {/* Summary Search Filter */}
+                                <div className="relative">
+                                  <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-white/40" size={16} />
+                                  <input 
+                                    type="text"
+                                    placeholder="Filter or search terms inside Officer Narrative report..."
+                                    value={summaryFilter}
+                                    onChange={(e) => setSummaryFilter(e.target.value)}
+                                    className="w-full pl-10 pr-4 py-2 bg-white/5 border border-white/10 rounded-xl text-xs text-white placeholder:text-white/40 focus:outline-none focus:border-orange-500/50"
+                                  />
+                                  {summaryFilter && (
+                                    <button 
+                                      onClick={() => setSummaryFilter('')}
+                                      className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-white/40 hover:text-white"
+                                    >
+                                      Clear
+                                    </button>
+                                  )}
+                                </div>
+
+                                {reportError && (
+                                  <div className="rounded-2xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-200 space-y-3">
+                                    <p>{reportError}</p>
+                                    <div className="flex flex-wrap gap-2">
+                                      <button onClick={() => handleRegenerateSummary()} className="px-3 py-1.5 rounded-lg bg-white text-black text-xs font-bold">Retry</button>
+                                      {allowGemini && !preferAssemblySummary && (
+                                        <button onClick={() => handleRegenerateSummary(undefined, 'gemini')} className="px-3 py-1.5 rounded-lg bg-white/10 text-xs font-bold">Send to Gemini instead</button>
+                                      )}
+                                    </div>
+                                  </div>
+                                )}
+                                <ReportBody
+                                  markdown={selectedRecording.summary}
+                                  filter={summaryFilter}
+                                  meta={selectedRecording.report_meta}
+                                  truncated={selectedRecording.report_meta?.truncated}
+                                  continuing={isRegeneratingSummary}
+                                  onContinue={() => handleRegenerateSummary()}
+                                />
+                                {selectedRecording.aai_deleted_at && (
+                                  <p className="text-[10px] text-white/40">AssemblyAI transcript deleted {selectedRecording.aai_deleted_at}.</p>
+                                )}
                               </div>
                             ) : (
-                              <div className="text-center py-20 opacity-40">
-                                <FileText size={48} className="mx-auto mb-4" />
-                                <p>Summary will be generated after transcription</p>
+                              <div className="text-center py-20 border-2 border-dashed border-white/5 rounded-3xl p-8 space-y-4">
+                                <FileText size={48} className="mx-auto text-white/20" />
+                                <p className="text-sm text-white/60">No summary generated for this recording yet</p>
+                                {reportError && <p className="text-xs text-red-300 max-w-md mx-auto">{reportError}</p>}
+                                {selectedRecording.has_transcript ? (
+                                  <button 
+                                    onClick={triggerRegeneratePrompt}
+                                    disabled={isRegeneratingSummary}
+                                    className="px-6 py-2.5 bg-orange-500 hover:bg-orange-600 rounded-xl font-bold text-xs transition-all flex items-center gap-2 mx-auto disabled:opacity-50"
+                                  >
+                                    {isRegeneratingSummary ? <Loader2 size={16} className="animate-spin" /> : <FileText size={16} />}
+                                    Generate Officer Narrative Summary
+                                  </button>
+                                ) : (
+                                  <p className="text-xs text-white/40">Transcribe the recording first to generate a summary.</p>
+                                )}
                               </div>
                             )}
                           </motion.div>
@@ -1520,14 +2323,186 @@ function AppContent() {
                     </div>
                   </>
                 ) : (
-                  <div className="flex-1 flex flex-col items-center justify-center opacity-20">
-                    <FileAudio size={64} strokeWidth={1} />
-                    <p className="mt-4 text-lg font-light">Select a recording to view details</p>
+                  <div className="flex-1 flex flex-col min-h-0 bg-[#0F1115] overflow-y-auto p-6 md:p-10">
+                    <div className="max-w-4xl mx-auto w-full space-y-6">
+                      <div className="flex items-center justify-between border-b border-white/10 pb-6">
+                        <div className="flex items-center gap-3">
+                          <div className="w-12 h-12 bg-orange-500/10 rounded-2xl flex items-center justify-center">
+                            <Calendar size={24} className="text-orange-500" />
+                          </div>
+                          <div>
+                            <h2 className="text-2xl font-bold tracking-tight">Case Timeline & Log</h2>
+                            <p className="text-sm text-white/40">Chronological timeline compiled from all recording transcripts in this case</p>
+                          </div>
+                        </div>
+                        {timelineReport && (
+                          <div className="flex items-center gap-3">
+                            <button
+                              onClick={() => {
+                                setTempTimelineReport(timelineReport);
+                                setIsEditingTimeline(true);
+                              }}
+                              className="px-4 py-2 bg-white/5 hover:bg-white/10 rounded-xl text-xs font-bold uppercase tracking-wider transition-all text-white border border-white/5"
+                            >
+                              Edit
+                            </button>
+                            <button
+                              onClick={async () => {
+                                const success = await copyToClipboard(timelineReport);
+                                if (success) {
+                                  alert("Timeline report copied to clipboard!");
+                                } else {
+                                  alert("Failed to copy report to clipboard.");
+                                }
+                              }}
+                              className="px-4 py-2 bg-orange-500/15 text-orange-500 hover:bg-orange-500/20 rounded-xl text-xs font-bold uppercase tracking-wider transition-all border border-orange-500/10"
+                            >
+                              Copy Report
+                            </button>
+                          </div>
+                        )}
+                      </div>
+
+                      {isEditingTimeline ? (
+                        <div className="space-y-4">
+                          <textarea
+                            value={tempTimelineReport}
+                            onChange={e => setTempTimelineReport(e.target.value)}
+                            rows={20}
+                            className="w-full bg-[#16191E] border border-white/10 rounded-2xl p-6 text-sm text-white font-mono leading-relaxed outline-none focus:border-orange-500 transition-colors resize-none"
+                          />
+                          <div className="flex justify-end gap-3">
+                            <button
+                              onClick={() => setIsEditingTimeline(false)}
+                              className="px-4 py-2 bg-white/5 hover:bg-white/10 rounded-xl text-xs font-bold uppercase tracking-wider transition-all"
+                            >
+                              Cancel
+                            </button>
+                            <button
+                              onClick={handleSaveTimeline}
+                              className="px-4 py-2 bg-orange-500 hover:bg-orange-600 rounded-xl text-xs font-bold uppercase tracking-wider transition-all text-white"
+                            >
+                              Save Changes
+                            </button>
+                          </div>
+                        </div>
+                      ) : timelineReport ? (
+                        <ReportBody
+                          markdown={timelineReport}
+                          meta={timelineMeta}
+                          truncated={timelineMeta?.truncated}
+                          continuing={isGeneratingTimeline}
+                          onContinue={() => handleGenerateTimeline('gateway')}
+                        />
+                      ) : (
+                        <div className="flex flex-col items-center justify-center py-20 border-2 border-dashed border-white/5 rounded-3xl text-center p-6 bg-[#16191E]/10">
+                          <Calendar size={48} className="text-white/10 mb-4 animate-pulse" />
+                          <h3 className="text-lg font-bold mb-1">No Timeline Report Generated</h3>
+                          <p className="text-xs text-white/40 mb-6 max-w-sm leading-relaxed">
+                            Generate a chronological case narrative and log using summaries from all recorded files in this case.
+                          </p>
+                          {isGeneratingTimeline ? (
+                            <div className="flex flex-col items-center gap-3">
+                              <Loader2 className="animate-spin text-orange-500" size={24} />
+                              <span className="text-xs font-bold uppercase tracking-widest text-orange-500">Compiling timeline...</span>
+                            </div>
+                          ) : (
+                            <div className="space-y-3">
+                              {timelineError && <p className="text-xs text-red-300 max-w-md">{timelineError}</p>}
+                              <button
+                                onClick={() => handleGenerateTimeline('gateway')}
+                                className="px-6 py-3 bg-orange-500 hover:bg-orange-600 rounded-xl font-bold text-sm transition-all flex items-center gap-2 text-white shadow-lg shadow-orange-500/10 mx-auto"
+                              >
+                                <Sparkles size={16} />
+                                {timelineError ? 'Retry timeline' : 'Generate Case Timeline'}
+                              </button>
+                              {timelineError && allowGemini && !preferAssemblySummary && (
+                                <button
+                                  onClick={() => handleGenerateTimeline('gemini')}
+                                  className="px-4 py-2 bg-white/10 hover:bg-white/15 rounded-xl text-xs font-bold"
+                                >
+                                  Send to Gemini instead
+                                </button>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 )}
               </div>
             </div>
           </>
+        )}
+
+        {isSummaryExpanded && selectedRecording?.summary && (
+          <div className="fixed inset-0 bg-black/95 backdrop-blur-md z-[120] flex flex-col p-6 sm:p-10">
+            <div className="flex items-center justify-between pb-4 mb-4 border-b border-white/10">
+              <div className="flex items-center gap-3">
+                <FileText className="text-orange-500" size={24} />
+                <div>
+                  <h2 className="text-lg font-bold text-white">Full Case Narrative & Investigative Report</h2>
+                  <p className="text-xs text-white/50">{selectedCase?.name} • {selectedRecording.original_name}</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-3 flex-1 max-w-md mx-6">
+                <div className="relative w-full">
+                  <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-white/40" size={16} />
+                  <input 
+                    type="text"
+                    placeholder="Filter or search terms inside Officer Narrative report..."
+                    value={summaryFilter}
+                    onChange={(e) => setSummaryFilter(e.target.value)}
+                    className="w-full pl-10 pr-4 py-2 bg-white/5 border border-white/10 rounded-xl text-xs text-white placeholder:text-white/40 focus:outline-none focus:border-orange-500/50"
+                  />
+                  {summaryFilter && (
+                    <button 
+                      onClick={() => setSummaryFilter('')}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-white/40 hover:text-white"
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+              </div>
+              <div className="flex items-center gap-3">
+                <button 
+                  onClick={handleCopySummary}
+                  className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-semibold transition-all"
+                >
+                  {copySuccess ? <Check size={14} className="text-green-400" /> : <Copy size={14} />}
+                  <span>{copySuccess ? 'Copied' : 'Copy Text'}</span>
+                </button>
+                <button 
+                  onClick={handlePrintReport}
+                  className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-semibold transition-all"
+                >
+                  <Printer size={14} />
+                  <span>Print Report</span>
+                </button>
+                <button 
+                  onClick={() => setIsSummaryExpanded(false)}
+                  className="p-2 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-semibold transition-all"
+                  title="Close Fullscreen View"
+                >
+                  <Minimize2 size={18} />
+                </button>
+              </div>
+            </div>
+            <div className="flex-1 overflow-y-auto pr-2 space-y-4">
+              <div className="max-w-4xl mx-auto">
+                <ReportBody
+                  markdown={selectedRecording.summary}
+                  filter={summaryFilter}
+                  meta={selectedRecording.report_meta}
+                  truncated={selectedRecording.report_meta?.truncated}
+                  continuing={isRegeneratingSummary}
+                  onContinue={() => handleRegenerateSummary()}
+                />
+              </div>
+            </div>
+          </div>
         )}
 
         {isConverting && (

@@ -17,4 +17,22 @@
 .prose ul { @apply list-disc pl-6 mb-4 space-y-2; }
 .prose li { @apply text-white/70; }
 .prose strong { @apply text-white font-bold; }
+.prose ol { @apply list-decimal pl-6 mb-4 space-y-2; }
+.prose em { @apply italic; }
+
+.report-html { overflow: visible; max-height: none; }
+.report-html h1 { @apply text-2xl font-bold mb-4 text-orange-500; }
+.report-html h2 { @apply text-xl font-bold mt-8 mb-3 text-orange-500; }
+.report-html h3 { @apply text-lg font-bold mt-6 mb-2 text-white; }
+.report-html p { @apply text-white/80 leading-relaxed mb-4; }
+.report-html ul { @apply list-disc pl-6 mb-4 space-y-2; }
+.report-html ol { @apply list-decimal pl-6 mb-4 space-y-2; }
+.report-html li { @apply text-white/70; }
+.report-html strong { @apply text-white font-bold; }
+.report-html em { @apply italic; }
+.report-html blockquote { @apply border-l-2 border-amber-500/60 pl-4 text-amber-100/90; }
+
+.report-footer {
+  @apply border-t border-white/10 pt-4 text-xs text-white/60;
+}
 

@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      width: 100vw;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background-color: #0F1115;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      overflow: hidden;
+      -webkit-app-region: drag;
+    }
+
+    .container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 45px;
+    }
+
+    .logo-container {
+      position: relative;
+      width: 120px;
+      height: 120px;
+    }
+
+    .logo {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      filter: drop-shadow(0 0 20px rgba(249, 115, 22, 0.2));
+      z-index: 2;
+      position: relative;
+    }
+
+    .pulse {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background-color: #f97316;
+      border-radius: 50%;
+      opacity: 0.2;
+      animation: pulse-animation 2s infinite ease-out;
+      z-index: 1;
+    }
+
+    @keyframes pulse-animation {
+      0% {
+        transform: scale(0.8);
+        opacity: 0.5;
+      }
+      100% {
+        transform: scale(1.5);
+        opacity: 0;
+      }
+    }
+
+    .title {
+      color: white;
+      font-size: 28px;
+      font-weight: 800;
+      letter-spacing: -0.025em;
+      margin: 0;
+    }
+
+    .status-text {
+      color: rgba(255, 255, 255, 0.4);
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.15em;
+      margin-top: 12px;
+    }
+
+    .loader-container {
+      width: 240px;
+      height: 4px;
+      background-color: rgba(255, 255, 255, 0.05);
+      border-radius: 10px;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .loader-bar {
+      height: 100%;
+      background: linear-gradient(90deg, #f97316, #fb923c);
+      width: 0%;
+      border-radius: 10px;
+      transition: width 0.5s ease-out;
+      box-shadow: 0 0 10px rgba(249, 115, 22, 0.5);
+    }
+
+    .progress-percent {
+      color: #f97316;
+      font-size: 10px;
+      font-weight: 800;
+      margin-top: 8px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="logo-container">
+      <div class="pulse"></div>
+      <img src="logo.png" class="logo" id="logoImg" onerror="this.src='logo.ico'">
+    </div>
+    
+    <div style="text-align: center;">
+      <h1 class="title">Narrative.AI</h1>
+      <p class="status-text" id="status">Initializing Engine</p>
+    </div>
+
+    <div style="display: flex; flex-direction: column; align-items: center;">
+      <div class="loader-container">
+        <div class="loader-bar" id="loader"></div>
+      </div>
+      <span class="progress-percent" id="percent">0%</span>
+    </div>
+  </div>
+
+  <script>
+    const loader = document.getElementById('loader');
+    const percent = document.getElementById('percent');
+    const status = document.getElementById('status');
+    let width = 0;
+
+    const statuses = [
+      "Initializing Engine",
+      "Loading Database",
+      "Starting Secure Server",
+      "Optimizing Interface",
+      "Ready"
+    ];
+
+    const interval = setInterval(() => {
+      if (width >= 92) {
+        // Just keep pulsing slowly if server is taking time
+        width += 0.1;
+        if (width > 98) width = 98;
+        loader.style.width = width + '%';
+        percent.innerText = Math.floor(width) + '%';
+      } else {
+        width += Math.random() * 2;
+        if (width > 92) width = 92;
+        loader.style.width = width + '%';
+        percent.innerText = Math.floor(width) + '%';
+        
+        // Update status text based on progress
+        if (width > 70) status.innerText = statuses[3];
+        else if (width > 45) status.innerText = statuses[2];
+        else if (width > 20) status.innerText = statuses[1];
+      }
+    }, 150);
+
+    window.completeLoading = () => {
+      clearInterval(interval);
+      loader.style.width = '100%';
+      percent.innerText = '100%';
+      status.innerText = statuses[4];
+    };
+  </script>
+</body>
+</html>
