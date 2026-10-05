@@ -22,5 +22,12 @@
     },
     "allowImportingTsExtensions": true,
     "noEmit": true
-  }
+  },
+  // server.cjs is the esbuild bundle. tsc cannot parse undici's private fields in that file.
+  "exclude": [
+    "node_modules",
+    "dist",
+    "dist-electron",
+    "server.cjs"
+  ]
 }
