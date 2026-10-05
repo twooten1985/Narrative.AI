@@ -4491,7 +4491,7 @@ var require_streams = __commonJS({
   "node_modules/raw-body/node_modules/iconv-lite/lib/streams.js"(exports2, module2) {
     "use strict";
     var Buffer2 = require("buffer").Buffer;
-    var Transform = require("stream").Transform;
+    var Transform2 = require("stream").Transform;
     module2.exports = function(iconv) {
       iconv.encodeStream = function encodeStream(encoding, options) {
         return new IconvLiteEncoderStream(iconv.getEncoder(encoding, options), options);
@@ -4508,9 +4508,9 @@ var require_streams = __commonJS({
       this.conv = conv;
       options = options || {};
       options.decodeStrings = false;
-      Transform.call(this, options);
+      Transform2.call(this, options);
     }
-    IconvLiteEncoderStream.prototype = Object.create(Transform.prototype, {
+    IconvLiteEncoderStream.prototype = Object.create(Transform2.prototype, {
       constructor: { value: IconvLiteEncoderStream }
     });
     IconvLiteEncoderStream.prototype._transform = function(chunk, encoding, done) {
@@ -4548,9 +4548,9 @@ var require_streams = __commonJS({
       this.conv = conv;
       options = options || {};
       options.encoding = this.encoding = "utf8";
-      Transform.call(this, options);
+      Transform2.call(this, options);
     }
-    IconvLiteDecoderStream.prototype = Object.create(Transform.prototype, {
+    IconvLiteDecoderStream.prototype = Object.create(Transform2.prototype, {
       constructor: { value: IconvLiteDecoderStream }
     });
     IconvLiteDecoderStream.prototype._transform = function(chunk, encoding, done) {
@@ -8078,7 +8078,7 @@ var require_streams2 = __commonJS({
   "node_modules/body-parser/node_modules/iconv-lite/lib/streams.js"(exports2, module2) {
     "use strict";
     var Buffer2 = require("buffer").Buffer;
-    var Transform = require("stream").Transform;
+    var Transform2 = require("stream").Transform;
     module2.exports = function(iconv) {
       iconv.encodeStream = function encodeStream(encoding, options) {
         return new IconvLiteEncoderStream(iconv.getEncoder(encoding, options), options);
@@ -8095,9 +8095,9 @@ var require_streams2 = __commonJS({
       this.conv = conv;
       options = options || {};
       options.decodeStrings = false;
-      Transform.call(this, options);
+      Transform2.call(this, options);
     }
-    IconvLiteEncoderStream.prototype = Object.create(Transform.prototype, {
+    IconvLiteEncoderStream.prototype = Object.create(Transform2.prototype, {
       constructor: { value: IconvLiteEncoderStream }
     });
     IconvLiteEncoderStream.prototype._transform = function(chunk, encoding, done) {
@@ -8135,9 +8135,9 @@ var require_streams2 = __commonJS({
       this.conv = conv;
       options = options || {};
       options.encoding = this.encoding = "utf8";
-      Transform.call(this, options);
+      Transform2.call(this, options);
     }
-    IconvLiteDecoderStream.prototype = Object.create(Transform.prototype, {
+    IconvLiteDecoderStream.prototype = Object.create(Transform2.prototype, {
       constructor: { value: IconvLiteDecoderStream }
     });
     IconvLiteDecoderStream.prototype._transform = function(chunk, encoding, done) {
@@ -17437,11 +17437,11 @@ var require_mime_types = __commonJS({
       }
       return exts[0];
     }
-    function lookup(path3) {
-      if (!path3 || typeof path3 !== "string") {
+    function lookup(path4) {
+      if (!path4 || typeof path4 !== "string") {
         return false;
       }
-      var extension2 = extname("x." + path3).toLowerCase().substr(1);
+      var extension2 = extname("x." + path4).toLowerCase().substr(1);
       if (!extension2) {
         return false;
       }
@@ -21902,7 +21902,7 @@ var require_path_to_regexp = __commonJS({
   "node_modules/path-to-regexp/index.js"(exports2, module2) {
     module2.exports = pathToRegexp;
     var MATCHING_GROUP_REGEXP = /\\.|\((?:\?<(.*?)>)?(?!\?)/g;
-    function pathToRegexp(path3, keys, options) {
+    function pathToRegexp(path4, keys, options) {
       options = options || {};
       keys = keys || [];
       var strict = options.strict;
@@ -21916,8 +21916,8 @@ var require_path_to_regexp = __commonJS({
       var pos = 0;
       var backtrack = "";
       var m;
-      if (path3 instanceof RegExp) {
-        while (m = MATCHING_GROUP_REGEXP.exec(path3.source)) {
+      if (path4 instanceof RegExp) {
+        while (m = MATCHING_GROUP_REGEXP.exec(path4.source)) {
           if (m[0][0] === "\\") continue;
           keys.push({
             name: m[1] || name++,
@@ -21925,18 +21925,18 @@ var require_path_to_regexp = __commonJS({
             offset: m.index
           });
         }
-        return path3;
+        return path4;
       }
-      if (Array.isArray(path3)) {
-        path3 = path3.map(function(value) {
+      if (Array.isArray(path4)) {
+        path4 = path4.map(function(value) {
           return pathToRegexp(value, keys, options).source;
         });
-        return new RegExp(path3.join("|"), flags);
+        return new RegExp(path4.join("|"), flags);
       }
-      if (typeof path3 !== "string") {
+      if (typeof path4 !== "string") {
         throw new TypeError("path must be a string, array of strings, or regular expression");
       }
-      path3 = path3.replace(
+      path4 = path4.replace(
         /\\.|(\/)?(\.)?:(\w+)(\(.*?\))?(\*)?(\?)?|[.*]|\/\(/g,
         function(match2, slash, format2, key, capture, star, optional, offset) {
           if (match2[0] === "\\") {
@@ -21953,7 +21953,7 @@ var require_path_to_regexp = __commonJS({
           if (slash || format2) {
             backtrack = "";
           } else {
-            backtrack += path3.slice(pos, offset);
+            backtrack += path4.slice(pos, offset);
           }
           pos = offset + match2.length;
           if (match2 === "*") {
@@ -21983,7 +21983,7 @@ var require_path_to_regexp = __commonJS({
           return result;
         }
       );
-      while (m = MATCHING_GROUP_REGEXP.exec(path3)) {
+      while (m = MATCHING_GROUP_REGEXP.exec(path4)) {
         if (m[0][0] === "\\") continue;
         if (keysOffset + i === keys.length || keys[keysOffset + i].offset > m.index) {
           keys.splice(keysOffset + i, 0, {
@@ -21995,13 +21995,13 @@ var require_path_to_regexp = __commonJS({
         }
         i++;
       }
-      path3 += strict ? "" : path3[path3.length - 1] === "/" ? "?" : "/?";
+      path4 += strict ? "" : path4[path4.length - 1] === "/" ? "?" : "/?";
       if (end) {
-        path3 += "$";
-      } else if (path3[path3.length - 1] !== "/") {
-        path3 += lookahead ? "(?=/|$)" : "(?:/|$)";
+        path4 += "$";
+      } else if (path4[path4.length - 1] !== "/") {
+        path4 += lookahead ? "(?=/|$)" : "(?:/|$)";
       }
-      return new RegExp("^" + path3, flags);
+      return new RegExp("^" + path4, flags);
     }
   }
 });
@@ -22014,19 +22014,19 @@ var require_layer = __commonJS({
     var debug = require_src3()("express:router:layer");
     var hasOwnProperty = Object.prototype.hasOwnProperty;
     module2.exports = Layer;
-    function Layer(path3, options, fn) {
+    function Layer(path4, options, fn) {
       if (!(this instanceof Layer)) {
-        return new Layer(path3, options, fn);
+        return new Layer(path4, options, fn);
       }
-      debug("new %o", path3);
+      debug("new %o", path4);
       var opts = options || {};
       this.handle = fn;
       this.name = fn.name || "<anonymous>";
       this.params = void 0;
       this.path = void 0;
-      this.regexp = pathRegexp(path3, this.keys = [], opts);
-      this.regexp.fast_star = path3 === "*";
-      this.regexp.fast_slash = path3 === "/" && opts.end === false;
+      this.regexp = pathRegexp(path4, this.keys = [], opts);
+      this.regexp.fast_star = path4 === "*";
+      this.regexp.fast_slash = path4 === "/" && opts.end === false;
     }
     Layer.prototype.handle_error = function handle_error(error, req, res, next) {
       var fn = this.handle;
@@ -22050,20 +22050,20 @@ var require_layer = __commonJS({
         next(err);
       }
     };
-    Layer.prototype.match = function match2(path3) {
+    Layer.prototype.match = function match2(path4) {
       var match3;
-      if (path3 != null) {
+      if (path4 != null) {
         if (this.regexp.fast_slash) {
           this.params = {};
           this.path = "";
           return true;
         }
         if (this.regexp.fast_star) {
-          this.params = { "0": decode_param(path3) };
-          this.path = path3;
+          this.params = { "0": decode_param(path4) };
+          this.path = path4;
           return true;
         }
-        match3 = this.regexp.exec(path3);
+        match3 = this.regexp.exec(path4);
       }
       if (!match3) {
         this.params = void 0;
@@ -22156,10 +22156,10 @@ var require_route = __commonJS({
     var slice = Array.prototype.slice;
     var toString = Object.prototype.toString;
     module2.exports = Route;
-    function Route(path3) {
-      this.path = path3;
+    function Route(path4) {
+      this.path = path4;
       this.stack = [];
-      debug("new %o", path3);
+      debug("new %o", path4);
       this.methods = {};
     }
     Route.prototype._handles_method = function _handles_method(method) {
@@ -22371,8 +22371,8 @@ var require_router = __commonJS({
         if (++sync > 100) {
           return setImmediate(next, err);
         }
-        var path3 = getPathname(req);
-        if (path3 == null) {
+        var path4 = getPathname(req);
+        if (path4 == null) {
           return done(layerError);
         }
         var layer;
@@ -22380,7 +22380,7 @@ var require_router = __commonJS({
         var route;
         while (match2 !== true && idx < stack.length) {
           layer = stack[idx++];
-          match2 = matchLayer(layer, path3);
+          match2 = matchLayer(layer, path4);
           route = layer.route;
           if (typeof match2 !== "boolean") {
             layerError = layerError || match2;
@@ -22418,18 +22418,18 @@ var require_router = __commonJS({
           } else if (route) {
             layer.handle_request(req, res, next);
           } else {
-            trim_prefix(layer, layerError, layerPath, path3);
+            trim_prefix(layer, layerError, layerPath, path4);
           }
           sync = 0;
         });
       }
-      function trim_prefix(layer, layerError, layerPath, path3) {
+      function trim_prefix(layer, layerError, layerPath, path4) {
         if (layerPath.length !== 0) {
-          if (layerPath !== path3.slice(0, layerPath.length)) {
+          if (layerPath !== path4.slice(0, layerPath.length)) {
             next(layerError);
             return;
           }
-          var c = path3[layerPath.length];
+          var c = path4[layerPath.length];
           if (c && c !== "/" && c !== ".") return next(layerError);
           debug("trim prefix (%s) from url %s", layerPath, req.url);
           removed = layerPath;
@@ -22507,7 +22507,7 @@ var require_router = __commonJS({
     };
     proto.use = function use(fn) {
       var offset = 0;
-      var path3 = "/";
+      var path4 = "/";
       if (typeof fn !== "function") {
         var arg = fn;
         while (Array.isArray(arg) && arg.length !== 0) {
@@ -22515,7 +22515,7 @@ var require_router = __commonJS({
         }
         if (typeof arg !== "function") {
           offset = 1;
-          path3 = fn;
+          path4 = fn;
         }
       }
       var callbacks = flatten(slice.call(arguments, offset));
@@ -22527,8 +22527,8 @@ var require_router = __commonJS({
         if (typeof fn !== "function") {
           throw new TypeError("Router.use() requires a middleware function but got a " + gettype(fn));
         }
-        debug("use %o %s", path3, fn.name || "<anonymous>");
-        var layer = new Layer(path3, {
+        debug("use %o %s", path4, fn.name || "<anonymous>");
+        var layer = new Layer(path4, {
           sensitive: this.caseSensitive,
           strict: false,
           end: false
@@ -22538,9 +22538,9 @@ var require_router = __commonJS({
       }
       return this;
     };
-    proto.route = function route(path3) {
-      var route2 = new Route(path3);
-      var layer = new Layer(path3, {
+    proto.route = function route(path4) {
+      var route2 = new Route(path4);
+      var layer = new Layer(path4, {
         sensitive: this.caseSensitive,
         strict: this.strict,
         end: true
@@ -22550,8 +22550,8 @@ var require_router = __commonJS({
       return route2;
     };
     methods.concat("all").forEach(function(method) {
-      proto[method] = function(path3) {
-        var route = this.route(path3);
+      proto[method] = function(path4) {
+        var route = this.route(path4);
         route[method].apply(route, slice.call(arguments, 1));
         return this;
       };
@@ -22587,9 +22587,9 @@ var require_router = __commonJS({
       }
       return toString.call(obj).replace(objectRegExp, "$1");
     }
-    function matchLayer(layer, path3) {
+    function matchLayer(layer, path4) {
       try {
-        return layer.match(path3);
+        return layer.match(path4);
       } catch (err) {
         return err;
       }
@@ -22707,13 +22707,13 @@ var require_view = __commonJS({
   "node_modules/express/lib/view.js"(exports2, module2) {
     "use strict";
     var debug = require_src3()("express:view");
-    var path3 = require("path");
+    var path4 = require("path");
     var fs4 = require("fs");
-    var dirname = path3.dirname;
-    var basename = path3.basename;
-    var extname = path3.extname;
-    var join = path3.join;
-    var resolve = path3.resolve;
+    var dirname = path4.dirname;
+    var basename = path4.basename;
+    var extname = path4.extname;
+    var join = path4.join;
+    var resolve = path4.resolve;
     module2.exports = View;
     function View(name, options) {
       var opts = options || {};
@@ -22742,17 +22742,17 @@ var require_view = __commonJS({
       this.path = this.lookup(fileName);
     }
     View.prototype.lookup = function lookup(name) {
-      var path4;
+      var path5;
       var roots = [].concat(this.root);
       debug('lookup "%s"', name);
-      for (var i = 0; i < roots.length && !path4; i++) {
+      for (var i = 0; i < roots.length && !path5; i++) {
         var root = roots[i];
         var loc = resolve(root, name);
         var dir = dirname(loc);
         var file = basename(loc);
-        path4 = this.resolve(dir, file);
+        path5 = this.resolve(dir, file);
       }
-      return path4;
+      return path5;
     };
     View.prototype.render = function render(options, callback) {
       debug('render "%s"', this.path);
@@ -22760,21 +22760,21 @@ var require_view = __commonJS({
     };
     View.prototype.resolve = function resolve2(dir, file) {
       var ext = this.ext;
-      var path4 = join(dir, file);
-      var stat = tryStat(path4);
+      var path5 = join(dir, file);
+      var stat = tryStat(path5);
       if (stat && stat.isFile()) {
-        return path4;
+        return path5;
       }
-      path4 = join(dir, basename(file, ext), "index" + ext);
-      stat = tryStat(path4);
+      path5 = join(dir, basename(file, ext), "index" + ext);
+      stat = tryStat(path5);
       if (stat && stat.isFile()) {
-        return path4;
+        return path5;
       }
     };
-    function tryStat(path4) {
-      debug('stat "%s"', path4);
+    function tryStat(path5) {
+      debug('stat "%s"', path5);
       try {
-        return fs4.statSync(path4);
+        return fs4.statSync(path5);
       } catch (e) {
         return void 0;
       }
@@ -23552,7 +23552,7 @@ var require_types = __commonJS({
 // node_modules/send/node_modules/mime/mime.js
 var require_mime = __commonJS({
   "node_modules/send/node_modules/mime/mime.js"(exports2, module2) {
-    var path3 = require("path");
+    var path4 = require("path");
     var fs4 = require("fs");
     function Mime() {
       this.types = /* @__PURE__ */ Object.create(null);
@@ -23582,8 +23582,8 @@ var require_mime = __commonJS({
       this.define(map);
       this._loading = null;
     };
-    Mime.prototype.lookup = function(path4, fallback) {
-      var ext = path4.replace(/^.*[\.\/\\]/, "").toLowerCase();
+    Mime.prototype.lookup = function(path5, fallback) {
+      var ext = path5.replace(/^.*[\.\/\\]/, "").toLowerCase();
       return this.types[ext] || fallback || this.default_type;
     };
     Mime.prototype.extension = function(mimeType) {
@@ -23817,28 +23817,28 @@ var require_send = __commonJS({
     var ms = require_ms5();
     var onFinished = require_on_finished();
     var parseRange = require_range_parser();
-    var path3 = require("path");
+    var path4 = require("path");
     var statuses = require_statuses();
     var Stream = require("stream");
     var util = require("util");
-    var extname = path3.extname;
-    var join = path3.join;
-    var normalize = path3.normalize;
-    var resolve = path3.resolve;
-    var sep = path3.sep;
+    var extname = path4.extname;
+    var join = path4.join;
+    var normalize = path4.normalize;
+    var resolve = path4.resolve;
+    var sep = path4.sep;
     var BYTES_RANGE_REGEXP = /^ *bytes=/;
     var MAX_MAXAGE = 60 * 60 * 24 * 365 * 1e3;
     var UP_PATH_REGEXP = /(?:^|[\\/])\.\.(?:[\\/]|$)/;
     module2.exports = send;
     module2.exports.mime = mime;
-    function send(req, path4, options) {
-      return new SendStream(req, path4, options);
+    function send(req, path5, options) {
+      return new SendStream(req, path5, options);
     }
-    function SendStream(req, path4, options) {
+    function SendStream(req, path5, options) {
       Stream.call(this);
       var opts = options || {};
       this.options = opts;
-      this.path = path4;
+      this.path = path5;
       this.req = req;
       this._acceptRanges = opts.acceptRanges !== void 0 ? Boolean(opts.acceptRanges) : true;
       this._cacheControl = opts.cacheControl !== void 0 ? Boolean(opts.cacheControl) : true;
@@ -23884,8 +23884,8 @@ var require_send = __commonJS({
       this._index = index2;
       return this;
     }, "send.index: pass index as option");
-    SendStream.prototype.root = function root(path4) {
-      this._root = resolve(String(path4));
+    SendStream.prototype.root = function root(path5) {
+      this._root = resolve(String(path5));
       debug("root %s", this._root);
       return this;
     };
@@ -23998,10 +23998,10 @@ var require_send = __commonJS({
       var lastModified = this.res.getHeader("Last-Modified");
       return parseHttpDate(lastModified) <= parseHttpDate(ifRange);
     };
-    SendStream.prototype.redirect = function redirect(path4) {
+    SendStream.prototype.redirect = function redirect(path5) {
       var res = this.res;
       if (hasListeners(this, "directory")) {
-        this.emit("directory", res, path4);
+        this.emit("directory", res, path5);
         return;
       }
       if (this.hasTrailingSlash()) {
@@ -24021,42 +24021,42 @@ var require_send = __commonJS({
     SendStream.prototype.pipe = function pipe(res) {
       var root = this._root;
       this.res = res;
-      var path4 = decode(this.path);
-      if (path4 === -1) {
+      var path5 = decode(this.path);
+      if (path5 === -1) {
         this.error(400);
         return res;
       }
-      if (~path4.indexOf("\0")) {
+      if (~path5.indexOf("\0")) {
         this.error(400);
         return res;
       }
       var parts;
       if (root !== null) {
-        if (path4) {
-          path4 = normalize("." + sep + path4);
+        if (path5) {
+          path5 = normalize("." + sep + path5);
         }
-        if (UP_PATH_REGEXP.test(path4)) {
-          debug('malicious path "%s"', path4);
+        if (UP_PATH_REGEXP.test(path5)) {
+          debug('malicious path "%s"', path5);
           this.error(403);
           return res;
         }
-        parts = path4.split(sep);
-        path4 = normalize(join(root, path4));
+        parts = path5.split(sep);
+        path5 = normalize(join(root, path5));
       } else {
-        if (UP_PATH_REGEXP.test(path4)) {
-          debug('malicious path "%s"', path4);
+        if (UP_PATH_REGEXP.test(path5)) {
+          debug('malicious path "%s"', path5);
           this.error(403);
           return res;
         }
-        parts = normalize(path4).split(sep);
-        path4 = resolve(path4);
+        parts = normalize(path5).split(sep);
+        path5 = resolve(path5);
       }
       if (containsDotFile(parts)) {
         var access = this._dotfiles;
         if (access === void 0) {
           access = parts[parts.length - 1][0] === "." ? this._hidden ? "allow" : "ignore" : "allow";
         }
-        debug('%s dotfile "%s"', access, path4);
+        debug('%s dotfile "%s"', access, path5);
         switch (access) {
           case "allow":
             break;
@@ -24070,13 +24070,13 @@ var require_send = __commonJS({
         }
       }
       if (this._index.length && this.hasTrailingSlash()) {
-        this.sendIndex(path4);
+        this.sendIndex(path5);
         return res;
       }
-      this.sendFile(path4);
+      this.sendFile(path5);
       return res;
     };
-    SendStream.prototype.send = function send2(path4, stat) {
+    SendStream.prototype.send = function send2(path5, stat) {
       var len = stat.size;
       var options = this.options;
       var opts = {};
@@ -24088,9 +24088,9 @@ var require_send = __commonJS({
         this.headersAlreadySent();
         return;
       }
-      debug('pipe "%s"', path4);
-      this.setHeader(path4, stat);
-      this.type(path4);
+      debug('pipe "%s"', path5);
+      this.setHeader(path5, stat);
+      this.type(path5);
       if (this.isConditionalGET()) {
         if (this.isPreconditionFailure()) {
           this.error(412);
@@ -24139,26 +24139,26 @@ var require_send = __commonJS({
         res.end();
         return;
       }
-      this.stream(path4, opts);
+      this.stream(path5, opts);
     };
-    SendStream.prototype.sendFile = function sendFile(path4) {
+    SendStream.prototype.sendFile = function sendFile(path5) {
       var i = 0;
       var self = this;
-      debug('stat "%s"', path4);
-      fs4.stat(path4, function onstat(err, stat) {
-        if (err && err.code === "ENOENT" && !extname(path4) && path4[path4.length - 1] !== sep) {
+      debug('stat "%s"', path5);
+      fs4.stat(path5, function onstat(err, stat) {
+        if (err && err.code === "ENOENT" && !extname(path5) && path5[path5.length - 1] !== sep) {
           return next(err);
         }
         if (err) return self.onStatError(err);
-        if (stat.isDirectory()) return self.redirect(path4);
-        self.emit("file", path4, stat);
-        self.send(path4, stat);
+        if (stat.isDirectory()) return self.redirect(path5);
+        self.emit("file", path5, stat);
+        self.send(path5, stat);
       });
       function next(err) {
         if (self._extensions.length <= i) {
           return err ? self.onStatError(err) : self.error(404);
         }
-        var p = path4 + "." + self._extensions[i++];
+        var p = path5 + "." + self._extensions[i++];
         debug('stat "%s"', p);
         fs4.stat(p, function(err2, stat) {
           if (err2) return next(err2);
@@ -24168,7 +24168,7 @@ var require_send = __commonJS({
         });
       }
     };
-    SendStream.prototype.sendIndex = function sendIndex(path4) {
+    SendStream.prototype.sendIndex = function sendIndex(path5) {
       var i = -1;
       var self = this;
       function next(err) {
@@ -24176,7 +24176,7 @@ var require_send = __commonJS({
           if (err) return self.onStatError(err);
           return self.error(404);
         }
-        var p = join(path4, self._index[i]);
+        var p = join(path5, self._index[i]);
         debug('stat "%s"', p);
         fs4.stat(p, function(err2, stat) {
           if (err2) return next(err2);
@@ -24187,10 +24187,10 @@ var require_send = __commonJS({
       }
       next();
     };
-    SendStream.prototype.stream = function stream(path4, options) {
+    SendStream.prototype.stream = function stream(path5, options) {
       var self = this;
       var res = this.res;
-      var stream2 = fs4.createReadStream(path4, options);
+      var stream2 = fs4.createReadStream(path5, options);
       this.emit("stream", stream2);
       stream2.pipe(res);
       function cleanup() {
@@ -24205,10 +24205,10 @@ var require_send = __commonJS({
         self.emit("end");
       });
     };
-    SendStream.prototype.type = function type(path4) {
+    SendStream.prototype.type = function type(path5) {
       var res = this.res;
       if (res.getHeader("Content-Type")) return;
-      var type2 = mime.lookup(path4);
+      var type2 = mime.lookup(path5);
       if (!type2) {
         debug("no content-type");
         return;
@@ -24217,9 +24217,9 @@ var require_send = __commonJS({
       debug("content-type %s", type2);
       res.setHeader("Content-Type", type2 + (charset ? "; charset=" + charset : ""));
     };
-    SendStream.prototype.setHeader = function setHeader(path4, stat) {
+    SendStream.prototype.setHeader = function setHeader(path5, stat) {
       var res = this.res;
-      this.emit("headers", res, path4, stat);
+      this.emit("headers", res, path5, stat);
       if (this._acceptRanges && !res.getHeader("Accept-Ranges")) {
         debug("accept ranges");
         res.setHeader("Accept-Ranges", "bytes");
@@ -24278,9 +24278,9 @@ var require_send = __commonJS({
       }
       return err instanceof Error ? createError(status, err, { expose: false }) : createError(status, err);
     }
-    function decode(path4) {
+    function decode(path5) {
       try {
-        return decodeURIComponent(path4);
+        return decodeURIComponent(path5);
       } catch (err) {
         return -1;
       }
@@ -25205,10 +25205,10 @@ var require_utils2 = __commonJS({
     var querystring = require("querystring");
     exports2.etag = createETagGenerator({ weak: false });
     exports2.wetag = createETagGenerator({ weak: true });
-    exports2.isAbsolute = function(path3) {
-      if ("/" === path3[0]) return true;
-      if (":" === path3[1] && ("\\" === path3[2] || "/" === path3[2])) return true;
-      if ("\\\\" === path3.substring(0, 2)) return true;
+    exports2.isAbsolute = function(path4) {
+      if ("/" === path4[0]) return true;
+      if (":" === path4[1] && ("\\" === path4[2] || "/" === path4[2])) return true;
+      if ("\\\\" === path4.substring(0, 2)) return true;
     };
     exports2.flatten = deprecate.function(
       flatten,
@@ -25420,7 +25420,7 @@ var require_application = __commonJS({
     };
     app.use = function use(fn) {
       var offset = 0;
-      var path3 = "/";
+      var path4 = "/";
       if (typeof fn !== "function") {
         var arg = fn;
         while (Array.isArray(arg) && arg.length !== 0) {
@@ -25428,7 +25428,7 @@ var require_application = __commonJS({
         }
         if (typeof arg !== "function") {
           offset = 1;
-          path3 = fn;
+          path4 = fn;
         }
       }
       var fns = flatten(slice.call(arguments, offset));
@@ -25439,12 +25439,12 @@ var require_application = __commonJS({
       var router = this._router;
       fns.forEach(function(fn2) {
         if (!fn2 || !fn2.handle || !fn2.set) {
-          return router.use(path3, fn2);
+          return router.use(path4, fn2);
         }
-        debug(".use app under %s", path3);
-        fn2.mountpath = path3;
+        debug(".use app under %s", path4);
+        fn2.mountpath = path4;
         fn2.parent = this;
-        router.use(path3, function mounted_app(req, res, next) {
+        router.use(path4, function mounted_app(req, res, next) {
           var orig = req.app;
           fn2.handle(req, res, function(err) {
             setPrototypeOf(req, orig.request);
@@ -25456,9 +25456,9 @@ var require_application = __commonJS({
       }, this);
       return this;
     };
-    app.route = function route(path3) {
+    app.route = function route(path4) {
       this.lazyrouter();
-      return this._router.route(path3);
+      return this._router.route(path4);
     };
     app.engine = function engine(ext, fn) {
       if (typeof fn !== "function") {
@@ -25509,7 +25509,7 @@ var require_application = __commonJS({
       }
       return this;
     };
-    app.path = function path3() {
+    app.path = function path4() {
       return this.parent ? this.parent.path() + this.mountpath : "";
     };
     app.enabled = function enabled(setting) {
@@ -25525,19 +25525,19 @@ var require_application = __commonJS({
       return this.set(setting, false);
     };
     methods.forEach(function(method) {
-      app[method] = function(path3) {
+      app[method] = function(path4) {
         if (method === "get" && arguments.length === 1) {
-          return this.set(path3);
+          return this.set(path4);
         }
         this.lazyrouter();
-        var route = this._router.route(path3);
+        var route = this._router.route(path4);
         route[method].apply(route, slice.call(arguments, 1));
         return this;
       };
     });
-    app.all = function all(path3) {
+    app.all = function all(path4) {
       this.lazyrouter();
-      var route = this._router.route(path3);
+      var route = this._router.route(path4);
       var args = slice.call(arguments, 1);
       for (var i = 0; i < methods.length; i++) {
         route[methods[i]].apply(route, args);
@@ -26296,7 +26296,7 @@ var require_request = __commonJS({
       var subdomains2 = !isIP(hostname) ? hostname.split(".").reverse() : [hostname];
       return subdomains2.slice(offset);
     });
-    defineGetter(req, "path", function path3() {
+    defineGetter(req, "path", function path4() {
       return parse(this).pathname;
     });
     defineGetter(req, "hostname", function hostname() {
@@ -26618,7 +26618,7 @@ var require_response = __commonJS({
     var http = require("http");
     var isAbsolute = require_utils2().isAbsolute;
     var onFinished = require_on_finished();
-    var path3 = require("path");
+    var path4 = require("path");
     var statuses = require_statuses();
     var merge = require_utils_merge();
     var sign = require_cookie_signature().sign;
@@ -26627,9 +26627,9 @@ var require_response = __commonJS({
     var setCharset = require_utils2().setCharset;
     var cookie = require_cookie();
     var send = require_send();
-    var extname = path3.extname;
+    var extname = path4.extname;
     var mime = send.mime;
-    var resolve = path3.resolve;
+    var resolve = path4.resolve;
     var vary = require_vary();
     var res = Object.create(http.ServerResponse.prototype);
     module2.exports = res;
@@ -26806,26 +26806,26 @@ var require_response = __commonJS({
       this.type("txt");
       return this.send(body);
     };
-    res.sendFile = function sendFile(path4, options, callback) {
+    res.sendFile = function sendFile(path5, options, callback) {
       var done = callback;
       var req = this.req;
       var res2 = this;
       var next = req.next;
       var opts = options || {};
-      if (!path4) {
+      if (!path5) {
         throw new TypeError("path argument is required to res.sendFile");
       }
-      if (typeof path4 !== "string") {
+      if (typeof path5 !== "string") {
         throw new TypeError("path must be a string to res.sendFile");
       }
       if (typeof options === "function") {
         done = options;
         opts = {};
       }
-      if (!opts.root && !isAbsolute(path4)) {
+      if (!opts.root && !isAbsolute(path5)) {
         throw new TypeError("path must be absolute or specify root to res.sendFile");
       }
-      var pathname = encodeURI(path4);
+      var pathname = encodeURI(path5);
       var file = send(req, pathname, opts);
       sendfile(res2, file, opts, function(err) {
         if (done) return done(err);
@@ -26835,7 +26835,7 @@ var require_response = __commonJS({
         }
       });
     };
-    res.sendfile = function(path4, options, callback) {
+    res.sendfile = function(path5, options, callback) {
       var done = callback;
       var req = this.req;
       var res2 = this;
@@ -26845,7 +26845,7 @@ var require_response = __commonJS({
         done = options;
         opts = {};
       }
-      var file = send(req, path4, opts);
+      var file = send(req, path5, opts);
       sendfile(res2, file, opts, function(err) {
         if (done) return done(err);
         if (err && err.code === "EISDIR") return next();
@@ -26858,7 +26858,7 @@ var require_response = __commonJS({
       res.sendfile,
       "res.sendfile: Use res.sendFile instead"
     );
-    res.download = function download(path4, filename, options, callback) {
+    res.download = function download(path5, filename, options, callback) {
       var done = callback;
       var name = filename;
       var opts = options || null;
@@ -26875,7 +26875,7 @@ var require_response = __commonJS({
         opts = filename;
       }
       var headers = {
-        "Content-Disposition": contentDisposition(name || path4)
+        "Content-Disposition": contentDisposition(name || path5)
       };
       if (opts && opts.headers) {
         var keys = Object.keys(opts.headers);
@@ -26888,7 +26888,7 @@ var require_response = __commonJS({
       }
       opts = Object.create(opts);
       opts.headers = headers;
-      var fullPath = !opts.root ? resolve(path4) : path4;
+      var fullPath = !opts.root ? resolve(path5) : path5;
       return this.sendFile(fullPath, opts, done);
     };
     res.contentType = res.type = function contentType(type) {
@@ -27189,11 +27189,11 @@ var require_serve_static = __commonJS({
         }
         var forwardError = !fallthrough;
         var originalUrl = parseUrl.original(req);
-        var path3 = parseUrl(req).pathname;
-        if (path3 === "/" && originalUrl.pathname.substr(-1) !== "/") {
-          path3 = "";
+        var path4 = parseUrl(req).pathname;
+        if (path4 === "/" && originalUrl.pathname.substr(-1) !== "/") {
+          path4 = "";
         }
-        var stream = send(req, path3, opts);
+        var stream = send(req, path4, opts);
         stream.on("directory", onDirectory);
         if (setHeaders) {
           stream.on("headers", setHeaders);
@@ -27702,19 +27702,19 @@ var require_utils3 = __commonJS({
       if (decode)
         return decode(data, hint);
     }
-    function basename(path3) {
-      if (typeof path3 !== "string")
+    function basename(path4) {
+      if (typeof path4 !== "string")
         return "";
-      for (let i = path3.length - 1; i >= 0; --i) {
-        switch (path3.charCodeAt(i)) {
+      for (let i = path4.length - 1; i >= 0; --i) {
+        switch (path4.charCodeAt(i)) {
           case 47:
           // '/'
           case 92:
-            path3 = path3.slice(i + 1);
-            return path3 === ".." || path3 === "." ? "" : path3;
+            path4 = path4.slice(i + 1);
+            return path4 === ".." || path4 === "." ? "" : path4;
         }
       }
-      return path3 === ".." || path3 === "." ? "" : path3;
+      return path4 === ".." || path4 === "." ? "" : path4;
     }
     var TOKEN = [
       0,
@@ -31695,7 +31695,7 @@ var require_disk = __commonJS({
   "node_modules/multer/storage/disk.js"(exports2, module2) {
     var fs4 = require("fs");
     var os = require("os");
-    var path3 = require("path");
+    var path4 = require("path");
     var crypto2 = require("crypto");
     var pipeline = require("stream").pipeline;
     var MulterError = require_multer_error();
@@ -31734,7 +31734,7 @@ var require_disk = __commonJS({
         if (err) return cb(err);
         that.getFilename(req, file, function(err2, filename) {
           if (err2) return cb(err2);
-          var finalPath = path3.join(destination, filename);
+          var finalPath = path4.join(destination, filename);
           if (file.stream.destroyed) return cb(new MulterError("STREAM_DESTROYED"));
           var outStream = fs4.createWriteStream(finalPath);
           file.path = finalPath;
@@ -31775,15 +31775,15 @@ var require_disk = __commonJS({
       });
     };
     DiskStorage.prototype._removeFile = function _removeFile(req, file, cb) {
-      var path4 = file.path;
+      var path5 = file.path;
       delete file.destination;
       delete file.filename;
       delete file.path;
       function unlink() {
         var flush = flushingFiles.get(file);
-        if (!flush) return fs4.unlink(path4, cb);
+        if (!flush) return fs4.unlink(path5, cb);
         flush.onClosed = function() {
-          fs4.unlink(path4, cb);
+          fs4.unlink(path5, cb);
         };
       }
       var outStream = openStreams.get(file);
@@ -32002,20 +32002,20 @@ var require_file_uri_to_path = __commonJS({
       var rest = decodeURI(uri.substring(7));
       var firstSlash = rest.indexOf("/");
       var host = rest.substring(0, firstSlash);
-      var path3 = rest.substring(firstSlash + 1);
+      var path4 = rest.substring(firstSlash + 1);
       if ("localhost" == host) host = "";
       if (host) {
         host = sep + sep + host;
       }
-      path3 = path3.replace(/^(.+)\|/, "$1:");
+      path4 = path4.replace(/^(.+)\|/, "$1:");
       if (sep == "\\") {
-        path3 = path3.replace(/\//g, "\\");
+        path4 = path4.replace(/\//g, "\\");
       }
-      if (/^.+\:/.test(path3)) {
+      if (/^.+\:/.test(path4)) {
       } else {
-        path3 = sep + path3;
+        path4 = sep + path4;
       }
-      return host + path3;
+      return host + path4;
     }
   }
 });
@@ -32024,18 +32024,18 @@ var require_file_uri_to_path = __commonJS({
 var require_bindings = __commonJS({
   "node_modules/bindings/bindings.js"(exports2, module2) {
     var fs4 = require("fs");
-    var path3 = require("path");
+    var path4 = require("path");
     var fileURLToPath2 = require_file_uri_to_path();
-    var join = path3.join;
-    var dirname = path3.dirname;
-    var exists = fs4.accessSync && function(path4) {
+    var join = path4.join;
+    var dirname = path4.dirname;
+    var exists = fs4.accessSync && function(path5) {
       try {
-        fs4.accessSync(path4);
+        fs4.accessSync(path5);
       } catch (e) {
         return false;
       }
       return true;
-    } || fs4.existsSync || path3.existsSync;
+    } || fs4.existsSync || path4.existsSync;
     var defaults = {
       arrow: process.env.NODE_BINDINGS_ARROW || " \u2192 ",
       compiled: process.env.NODE_BINDINGS_COMPILED_DIR || "compiled",
@@ -32080,7 +32080,7 @@ var require_bindings = __commonJS({
       if (!opts.module_root) {
         opts.module_root = exports2.getRoot(exports2.getFileName());
       }
-      if (path3.extname(opts.bindings) != ".node") {
+      if (path4.extname(opts.bindings) != ".node") {
         opts.bindings += ".node";
       }
       var requireFunc = typeof __webpack_require__ === "function" ? __non_webpack_require__ : require;
@@ -32319,7 +32319,7 @@ var require_backup = __commonJS({
   "node_modules/better-sqlite3/lib/methods/backup.js"(exports2, module2) {
     "use strict";
     var fs4 = require("fs");
-    var path3 = require("path");
+    var path4 = require("path");
     var { promisify } = require("util");
     var { cppdb } = require_util();
     var fsAccess = promisify(fs4.access);
@@ -32335,7 +32335,7 @@ var require_backup = __commonJS({
       if (typeof attachedName !== "string") throw new TypeError('Expected the "attached" option to be a string');
       if (!attachedName) throw new TypeError('The "attached" option cannot be an empty string');
       if (handler != null && typeof handler !== "function") throw new TypeError('Expected the "progress" option to be a function');
-      await fsAccess(path3.dirname(filename)).catch(() => {
+      await fsAccess(path4.dirname(filename)).catch(() => {
         throw new TypeError("Cannot save backup because the directory does not exist");
       });
       const isNewFile = await fsAccess(filename).then(() => false, () => true);
@@ -32641,7 +32641,7 @@ var require_database = __commonJS({
   "node_modules/better-sqlite3/lib/database.js"(exports2, module2) {
     "use strict";
     var fs4 = require("fs");
-    var path3 = require("path");
+    var path4 = require("path");
     var util = require_util();
     var SqliteError = require_sqlite_error();
     var DEFAULT_ADDON;
@@ -32677,7 +32677,7 @@ var require_database = __commonJS({
         addon = DEFAULT_ADDON || (DEFAULT_ADDON = require_bindings()("better_sqlite3.node"));
       } else if (typeof nativeBinding === "string") {
         const requireFunc = typeof __non_webpack_require__ === "function" ? __non_webpack_require__ : require;
-        addon = requireFunc(path3.resolve(nativeBinding).replace(/(\.node)?$/, ".node"));
+        addon = requireFunc(path4.resolve(nativeBinding).replace(/(\.node)?$/, ".node"));
       } else {
         addon = nativeBinding;
       }
@@ -32685,7 +32685,7 @@ var require_database = __commonJS({
         addon.setErrorConstructor(SqliteError);
         addon.isInitialized = true;
       }
-      if (!anonymous && !filename.startsWith("file:") && !fs4.existsSync(path3.dirname(filename))) {
+      if (!anonymous && !filename.startsWith("file:") && !fs4.existsSync(path4.dirname(filename))) {
         throw new TypeError("Cannot open database because the directory does not exist");
       }
       Object.defineProperties(this, {
@@ -32727,7 +32727,7 @@ var require_windows = __commonJS({
     module2.exports = isexe;
     isexe.sync = sync;
     var fs4 = require("fs");
-    function checkPathExt(path3, options) {
+    function checkPathExt(path4, options) {
       var pathext = options.pathExt !== void 0 ? options.pathExt : process.env.PATHEXT;
       if (!pathext) {
         return true;
@@ -32738,25 +32738,25 @@ var require_windows = __commonJS({
       }
       for (var i = 0; i < pathext.length; i++) {
         var p = pathext[i].toLowerCase();
-        if (p && path3.substr(-p.length).toLowerCase() === p) {
+        if (p && path4.substr(-p.length).toLowerCase() === p) {
           return true;
         }
       }
       return false;
     }
-    function checkStat(stat, path3, options) {
+    function checkStat(stat, path4, options) {
       if (!stat.isSymbolicLink() && !stat.isFile()) {
         return false;
       }
-      return checkPathExt(path3, options);
+      return checkPathExt(path4, options);
     }
-    function isexe(path3, options, cb) {
-      fs4.stat(path3, function(er, stat) {
-        cb(er, er ? false : checkStat(stat, path3, options));
+    function isexe(path4, options, cb) {
+      fs4.stat(path4, function(er, stat) {
+        cb(er, er ? false : checkStat(stat, path4, options));
       });
     }
-    function sync(path3, options) {
-      return checkStat(fs4.statSync(path3), path3, options);
+    function sync(path4, options) {
+      return checkStat(fs4.statSync(path4), path4, options);
     }
   }
 });
@@ -32767,13 +32767,13 @@ var require_mode = __commonJS({
     module2.exports = isexe;
     isexe.sync = sync;
     var fs4 = require("fs");
-    function isexe(path3, options, cb) {
-      fs4.stat(path3, function(er, stat) {
+    function isexe(path4, options, cb) {
+      fs4.stat(path4, function(er, stat) {
         cb(er, er ? false : checkStat(stat, options));
       });
     }
-    function sync(path3, options) {
-      return checkStat(fs4.statSync(path3), options);
+    function sync(path4, options) {
+      return checkStat(fs4.statSync(path4), options);
     }
     function checkStat(stat, options) {
       return stat.isFile() && checkMode(stat, options);
@@ -32806,7 +32806,7 @@ var require_isexe = __commonJS({
     }
     module2.exports = isexe;
     isexe.sync = sync;
-    function isexe(path3, options, cb) {
+    function isexe(path4, options, cb) {
       if (typeof options === "function") {
         cb = options;
         options = {};
@@ -32816,7 +32816,7 @@ var require_isexe = __commonJS({
           throw new TypeError("callback not provided");
         }
         return new Promise(function(resolve, reject) {
-          isexe(path3, options || {}, function(er, is) {
+          isexe(path4, options || {}, function(er, is) {
             if (er) {
               reject(er);
             } else {
@@ -32825,7 +32825,7 @@ var require_isexe = __commonJS({
           });
         });
       }
-      core(path3, options || {}, function(er, is) {
+      core(path4, options || {}, function(er, is) {
         if (er) {
           if (er.code === "EACCES" || options && options.ignoreErrors) {
             er = null;
@@ -32835,9 +32835,9 @@ var require_isexe = __commonJS({
         cb(er, is);
       });
     }
-    function sync(path3, options) {
+    function sync(path4, options) {
       try {
-        return core.sync(path3, options || {});
+        return core.sync(path4, options || {});
       } catch (er) {
         if (options && options.ignoreErrors || er.code === "EACCES") {
           return false;
@@ -32855,7 +32855,7 @@ var require_which = __commonJS({
     module2.exports = which;
     which.sync = whichSync;
     var isWindows = process.platform === "win32" || process.env.OSTYPE === "cygwin" || process.env.OSTYPE === "msys";
-    var path3 = require("path");
+    var path4 = require("path");
     var COLON = isWindows ? ";" : ":";
     var isexe = require_isexe();
     function getNotFoundError(cmd) {
@@ -32904,7 +32904,7 @@ var require_which = __commonJS({
         var pathPart = pathEnv[i];
         if (pathPart.charAt(0) === '"' && pathPart.slice(-1) === '"')
           pathPart = pathPart.slice(1, -1);
-        var p = path3.join(pathPart, cmd);
+        var p = path4.join(pathPart, cmd);
         if (!pathPart && /^\.[\\\/]/.test(cmd)) {
           p = cmd.slice(0, 2) + p;
         }
@@ -32935,7 +32935,7 @@ var require_which = __commonJS({
         var pathPart = pathEnv[i];
         if (pathPart.charAt(0) === '"' && pathPart.slice(-1) === '"')
           pathPart = pathPart.slice(1, -1);
-        var p = path3.join(pathPart, cmd);
+        var p = path4.join(pathPart, cmd);
         if (!pathPart && /^\.[\\\/]/.test(cmd)) {
           p = cmd.slice(0, 2) + p;
         }
@@ -33789,14 +33789,14 @@ var require_custom = __commonJS({
 var require_misc = __commonJS({
   "node_modules/fluent-ffmpeg/lib/options/misc.js"(exports2, module2) {
     "use strict";
-    var path3 = require("path");
+    var path4 = require("path");
     module2.exports = function(proto) {
       proto.usingPreset = proto.preset = function(preset) {
         if (typeof preset === "function") {
           preset(this);
         } else {
           try {
-            var modulePath = path3.join(this.options.presets, preset);
+            var modulePath = path4.join(this.options.presets, preset);
             var module3 = require(modulePath);
             if (typeof module3.load === "function") {
               module3.load(this);
@@ -34684,7 +34684,7 @@ var require_processor = __commonJS({
   "node_modules/fluent-ffmpeg/lib/processor.js"(exports2, module2) {
     "use strict";
     var spawn = require("child_process").spawn;
-    var path3 = require("path");
+    var path4 = require("path");
     var fs4 = require("fs");
     var async = require_async();
     var utils = require_utils4();
@@ -35082,7 +35082,7 @@ var require_capabilities = __commonJS({
   "node_modules/fluent-ffmpeg/lib/capabilities.js"(exports2, module2) {
     "use strict";
     var fs4 = require("fs");
-    var path3 = require("path");
+    var path4 = require("path");
     var async = require_async();
     var utils = require_utils4();
     var avCodecRegexp = /^\s*([D ])([E ])([VAS])([S ])([D ])([T ]) ([^ ]+) +(.*)$/;
@@ -35183,7 +35183,7 @@ var require_capabilities = __commonJS({
                 cb(err);
               } else if (ffmpeg2.length) {
                 var name = utils.isWindows ? "ffprobe.exe" : "ffprobe";
-                var ffprobe2 = path3.join(path3.dirname(ffmpeg2), name);
+                var ffprobe2 = path4.join(path4.dirname(ffmpeg2), name);
                 fs4.exists(ffprobe2, function(exists) {
                   cb(null, exists ? ffprobe2 : "");
                 });
@@ -35584,10 +35584,10 @@ var require_ffprobe = __commonJS({
             return handleCallback(new Error("Invalid input index"));
           }
         }
-        this._getFfprobePath(function(err, path3) {
+        this._getFfprobePath(function(err, path4) {
           if (err) {
             return handleCallback(err);
-          } else if (!path3) {
+          } else if (!path4) {
             return handleCallback(new Error("Cannot find ffprobe"));
           }
           var stdout = "";
@@ -35595,7 +35595,7 @@ var require_ffprobe = __commonJS({
           var stderr = "";
           var stderrClosed = false;
           var src = input.isStream ? "pipe:0" : input.source;
-          var ffprobe = spawn(path3, ["-show_streams", "-show_format"].concat(options, src), { windowsHide: true });
+          var ffprobe = spawn(path4, ["-show_streams", "-show_format"].concat(options, src), { windowsHide: true });
           if (input.isStream) {
             ffprobe.stdin.on("error", function(err2) {
               if (["ECONNRESET", "EPIPE", "EOF"].indexOf(err2.code) >= 0) {
@@ -35682,7 +35682,7 @@ var require_recipes = __commonJS({
   "node_modules/fluent-ffmpeg/lib/recipes.js"(exports2, module2) {
     "use strict";
     var fs4 = require("fs");
-    var path3 = require("path");
+    var path4 = require("path");
     var PassThrough = require("stream").PassThrough;
     var async = require_async();
     var utils = require_utils4();
@@ -35810,8 +35810,8 @@ var require_recipes = __commonJS({
               pattern += ".png";
             }
             if (config.timemarks.length > 1 && !pattern.match(/%(s|0*i)/)) {
-              var ext = path3.extname(pattern);
-              pattern = path3.join(path3.dirname(pattern), path3.basename(pattern, ext) + "_%i" + ext);
+              var ext = path4.extname(pattern);
+              pattern = path4.join(path4.dirname(pattern), path4.basename(pattern, ext) + "_%i" + ext);
             }
             next(null, pattern);
           },
@@ -35821,7 +35821,7 @@ var require_recipes = __commonJS({
               if (typeof source !== "string") {
                 return next(new Error("Cannot replace %f or %b when using an input stream"));
               }
-              pattern = pattern.replace(/%f/g, path3.basename(source)).replace(/%b/g, path3.basename(source, path3.extname(source)));
+              pattern = pattern.replace(/%f/g, path4.basename(source)).replace(/%b/g, path4.basename(source, path4.extname(source)));
             }
             next(null, pattern);
           },
@@ -35927,7 +35927,7 @@ var require_recipes = __commonJS({
               first = config.timemarks[i2];
               self.seekInput(first);
             }
-            self.output(path3.join(config.folder, filenames[i2])).frames(1).map(stream);
+            self.output(path4.join(config.folder, filenames[i2])).frames(1).map(stream);
             if (i2 > 0) {
               self.seek(config.timemarks[i2] - first);
             }
@@ -35971,7 +35971,7 @@ var require_recipes = __commonJS({
 var require_fluent_ffmpeg = __commonJS({
   "node_modules/fluent-ffmpeg/lib/fluent-ffmpeg.js"(exports2, module2) {
     "use strict";
-    var path3 = require("path");
+    var path4 = require("path");
     var util = require("util");
     var EventEmitter = require("events").EventEmitter;
     var utils = require_utils4();
@@ -35997,7 +35997,7 @@ var require_fluent_ffmpeg = __commonJS({
         self[prop] = utils.args();
       });
       options.stdoutLines = "stdoutLines" in options ? options.stdoutLines : 100;
-      options.presets = options.presets || options.preset || path3.join(__dirname, "presets");
+      options.presets = options.presets || options.preset || path4.join(__dirname, "presets");
       options.niceness = options.niceness || options.priority || 0;
       this.options = options;
       this.logger = options.logger || {
@@ -36056,14 +36056,14 @@ var require_fluent_ffmpeg = __commonJS({
     require_misc()(FfmpegCommand.prototype);
     require_processor()(FfmpegCommand.prototype);
     require_capabilities()(FfmpegCommand.prototype);
-    FfmpegCommand.setFfmpegPath = function(path4) {
-      new FfmpegCommand().setFfmpegPath(path4);
+    FfmpegCommand.setFfmpegPath = function(path5) {
+      new FfmpegCommand().setFfmpegPath(path5);
     };
-    FfmpegCommand.setFfprobePath = function(path4) {
-      new FfmpegCommand().setFfprobePath(path4);
+    FfmpegCommand.setFfprobePath = function(path5) {
+      new FfmpegCommand().setFfprobePath(path5);
     };
-    FfmpegCommand.setFlvtoolPath = function(path4) {
-      new FfmpegCommand().setFlvtoolPath(path4);
+    FfmpegCommand.setFlvtoolPath = function(path5) {
+      new FfmpegCommand().setFlvtoolPath(path5);
     };
     FfmpegCommand.availableFilters = FfmpegCommand.getAvailableFilters = function(callback) {
       new FfmpegCommand().availableFilters(callback);
@@ -36100,7 +36100,7 @@ __export(server_exports, {
 });
 module.exports = __toCommonJS(server_exports);
 var import_express = __toESM(require_express2(), 1);
-var import_path = __toESM(require("path"), 1);
+var import_path2 = __toESM(require("path"), 1);
 var import_crypto = __toESM(require("crypto"), 1);
 var import_multer = __toESM(require_multer(), 1);
 var import_better_sqlite3 = __toESM(require_lib5(), 1);
@@ -39127,6 +39127,161 @@ async function gatewayChat(opts) {
 
 // src/services/aaiClient.ts
 var import_fs = __toESM(require("fs"), 1);
+var import_node_stream = require("node:stream");
+var import_undici = require("undici");
+var UPLOAD_MAX_ATTEMPTS = 4;
+var UPLOAD_HEADERS_TIMEOUT_MS = 3 * 60 * 60 * 1e3;
+var UPLOAD_BODY_TIMEOUT_MS = 3 * 60 * 60 * 1e3;
+var UPLOAD_CONNECT_TIMEOUT_MS = 3e4;
+var TRANSIENT_UPLOAD_CODES = /* @__PURE__ */ new Set([
+  "ECONNRESET",
+  "ECONNREFUSED",
+  "EPIPE",
+  "ETIMEDOUT",
+  "EAI_AGAIN",
+  "ENETUNREACH",
+  "EHOSTUNREACH",
+  "ECONNABORTED",
+  "ENETRESET",
+  "EHOSTDOWN",
+  "UND_ERR_SOCKET",
+  "UND_ERR_CONNECT_TIMEOUT",
+  "UND_ERR_HEADERS_TIMEOUT",
+  "UND_ERR_BODY_TIMEOUT",
+  "UND_ERR_REQUEST_ABORTED",
+  "UND_ERR_CLOSED",
+  "UND_ERR_DESTROYED",
+  "UND_ERR_ABORTED"
+]);
+var FATAL_UPLOAD_CODES = /* @__PURE__ */ new Set(["ENOENT", "EACCES", "EPERM", "EISDIR", "ERR_INVALID_ARG_TYPE"]);
+function uploadDispatcherOptions() {
+  return {
+    headersTimeout: UPLOAD_HEADERS_TIMEOUT_MS,
+    bodyTimeout: UPLOAD_BODY_TIMEOUT_MS,
+    connectTimeout: UPLOAD_CONNECT_TIMEOUT_MS,
+    keepAliveTimeout: 6e4,
+    keepAliveMaxTimeout: 6e5
+  };
+}
+var uploadAgent = null;
+function getUploadAgent() {
+  if (!uploadAgent) uploadAgent = new import_undici.Agent(uploadDispatcherOptions());
+  return uploadAgent;
+}
+function walkError(error) {
+  const codes = [];
+  const messages = [];
+  let status;
+  const seen = /* @__PURE__ */ new Set();
+  let current = error;
+  while (current && typeof current === "object" && !seen.has(current)) {
+    seen.add(current);
+    if (typeof current.status === "number" && status === void 0) status = current.status;
+    if (current.code && !codes.includes(String(current.code))) codes.push(String(current.code));
+    if (typeof current.message === "string" && current.message.trim() && !messages.includes(current.message)) {
+      messages.push(current.message);
+    }
+    current = current.cause;
+  }
+  return { codes, messages, status };
+}
+function formatCauseChain(error) {
+  const info = walkError(error);
+  const codes = [...info.codes];
+  if (info.status && !codes.includes(`HTTP_${info.status}`)) codes.push(`HTTP_${info.status}`);
+  const causeMessages = info.messages.slice(1);
+  return [
+    codes.length ? `code=${codes.join(",")}` : "",
+    causeMessages.length ? `cause=${causeMessages.join(" | ")}` : ""
+  ].filter(Boolean).join(" ");
+}
+function isTransientUploadFailure(error) {
+  const info = walkError(error);
+  if (info.status === 401 || info.status === 403 || info.status === 400 || info.status === 404 || info.status === 413) return false;
+  if (info.codes.some((code) => FATAL_UPLOAD_CODES.has(code))) return false;
+  if (info.status === 408 || info.status === 409 || info.status === 425 || info.status === 429) return true;
+  if (typeof info.status === "number" && info.status >= 500 && info.status <= 599) return true;
+  if (info.codes.some((code) => TRANSIENT_UPLOAD_CODES.has(code) || code.startsWith("UND_ERR_"))) return true;
+  const text = info.messages.join(" ").toLowerCase();
+  return text.includes("fetch failed") || text.includes("failed to fetch") || text.includes("socket hang up") || text.includes("network error") || text.includes("timed out") || text.includes("timeout") || text.includes("econnreset");
+}
+function shortUploadReason(error) {
+  const info = walkError(error);
+  if (info.status) return `HTTP ${info.status}`;
+  if (info.codes[0]) return info.codes[0];
+  return "network connection dropped";
+}
+function uploadFailureMessage(error, attempt, attempts) {
+  const info = walkError(error);
+  const attemptNote = attempt && attempts ? ` (attempt ${attempt}/${attempts})` : "";
+  if (info.status === 401 || info.status === 403) {
+    return `AssemblyAI rejected the API key. Open Settings and check the key, then retry. The recording is still on this computer.${attemptNote}`;
+  }
+  if (typeof info.status === "number" && (info.status === 429 || info.status >= 500)) {
+    const detail = info.messages[info.messages.length - 1];
+    const cleaned = detail && !detail.includes(`(${info.status})`) ? `: ${detail}` : "";
+    return `AssemblyAI returned an error (${info.status}${cleaned}). The recording is still on this computer. Use Retry to send it again.${attemptNote}`;
+  }
+  if (isTransientUploadFailure(error)) {
+    const detail = info.codes[0] || info.messages[info.messages.length - 1] || "network connection dropped";
+    return `The upload to AssemblyAI was interrupted (${detail}). The recording is still on this computer. Use Retry to send it again.${attemptNote}`;
+  }
+  if (info.status) {
+    const detail = info.messages[info.messages.length - 1];
+    const cleaned = detail && !detail.includes(`(${info.status})`) ? `: ${detail}` : "";
+    return `AssemblyAI rejected the upload (${info.status}${cleaned}).${attemptNote}`;
+  }
+  const fallback = info.messages[info.messages.length - 1] || "AssemblyAI upload failed.";
+  return `${fallback}${attemptNote}`;
+}
+var UploadAttemptError = class extends Error {
+  constructor(message2, options) {
+    super(message2, options?.cause ? { cause: options.cause } : void 0);
+    this.name = "UploadAttemptError";
+    this.status = options?.status;
+  }
+};
+function uploadBackoffMs(failedAttempt) {
+  return Math.min(3e4, 2e3 * 2 ** Math.max(0, failedAttempt - 1));
+}
+function destroyQuiet(stream) {
+  if (!stream || stream.destroyed) return;
+  stream.destroy();
+}
+function openUploadBody(filePath, openStream, onBytes) {
+  const source = openStream(filePath);
+  let loaded = 0;
+  const body = new import_node_stream.Transform({
+    transform(chunk, _encoding, callback) {
+      loaded += Buffer.isBuffer(chunk) ? chunk.length : Buffer.byteLength(String(chunk));
+      try {
+        onBytes(loaded);
+      } catch {
+      }
+      callback(null, chunk);
+    }
+  });
+  const fail = (error) => {
+    if (!body.destroyed) body.destroy(error);
+  };
+  source.on("error", fail);
+  source.pipe(body);
+  let closed = false;
+  return {
+    body,
+    destroy() {
+      if (closed) return;
+      closed = true;
+      source.removeListener("error", fail);
+      source.on("error", () => {
+      });
+      body.on("error", () => {
+      });
+      destroyQuiet(source);
+      destroyQuiet(body);
+    }
+  };
+}
 function buildTranscriptRequest(opts) {
   const body = {
     audio_url: opts.audioUrl,
@@ -39151,24 +39306,70 @@ function buildTranscriptRequest(opts) {
   return body;
 }
 async function streamUploadAudio(opts) {
-  const fetchImpl = opts.fetchImpl || fetch;
-  const stat = import_fs.default.statSync(opts.filePath);
-  const stream = import_fs.default.createReadStream(opts.filePath);
-  const response = await fetchImpl(`${opts.apiBase.replace(/\/$/, "")}/v2/upload`, {
-    method: "POST",
-    headers: {
-      authorization: opts.apiKey,
-      "content-type": "application/octet-stream",
-      "content-length": String(stat.size)
-    },
-    body: stream,
-    duplex: "half"
-  });
-  const result = await response.json().catch(() => ({}));
-  if (!response.ok || !result.upload_url) {
-    throw new Error(result.error || `AssemblyAI upload failed (${response.status})`);
+  const attempts = Math.max(1, opts.maxAttempts ?? UPLOAD_MAX_ATTEMPTS);
+  const sleep2 = opts.sleepImpl ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+  const openStream = opts.openStream ?? ((filePath) => import_fs.default.createReadStream(filePath));
+  const fetchImpl = opts.fetchImpl ?? ((url, init) => (0, import_undici.fetch)(url, {
+    ...init,
+    dispatcher: init.dispatcher ?? getUploadAgent()
+  }));
+  const endpoint = `${opts.apiBase.replace(/\/$/, "")}/v2/upload`;
+  let lastError;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    let opened = null;
+    try {
+      const stat = await import_fs.default.promises.stat(opts.filePath);
+      if (!stat.isFile() || stat.size <= 0) {
+        throw new UploadAttemptError("The audio file is empty, so it was not uploaded.", { cause: Object.assign(new Error("empty file"), { code: "ENOENT" }) });
+      }
+      let lastTick = 0;
+      opened = openUploadBody(opts.filePath, openStream, (loaded) => {
+        const now = Date.now();
+        if (loaded < stat.size && now - lastTick < 200) return;
+        lastTick = now;
+        opts.onProgress?.({ loaded, total: stat.size, attempt, attempts });
+      });
+      const response = await fetchImpl(endpoint, {
+        method: "POST",
+        headers: {
+          authorization: opts.apiKey,
+          "content-type": "application/octet-stream",
+          "content-length": String(stat.size)
+        },
+        body: opened.body,
+        duplex: "half",
+        dispatcher: opts.dispatcher ?? (opts.fetchImpl ? void 0 : getUploadAgent())
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || !result.upload_url) {
+        const message2 = result.error || `AssemblyAI upload failed (${response.status})`;
+        throw new UploadAttemptError(message2, { status: response.status });
+      }
+      return result.upload_url;
+    } catch (error) {
+      lastError = error;
+      opened?.destroy();
+      opened = null;
+      const transient = isTransientUploadFailure(error);
+      console.error(`[aai] upload attempt ${attempt}/${attempts} failed: ${uploadFailureMessage(error)} [${formatCauseChain(error) || "no-cause"}]`);
+      if (!transient || attempt === attempts) {
+        const wrapped = new Error(uploadFailureMessage(error, attempt, attempts));
+        wrapped.cause = error;
+        const status = walkError(error).status;
+        if (status) wrapped.status = status;
+        throw wrapped;
+      }
+      opts.onRetry?.({
+        nextAttempt: attempt + 1,
+        attempts,
+        reason: shortUploadReason(error)
+      });
+      await sleep2(uploadBackoffMs(attempt));
+    } finally {
+      opened?.destroy();
+    }
   }
-  return result.upload_url;
+  throw lastError instanceof Error ? lastError : new Error("AssemblyAI upload failed.");
 }
 async function createTranscript(opts) {
   const fetchImpl = opts.fetchImpl || fetch;
@@ -39211,6 +39412,49 @@ async function deleteRemoteTranscript(opts) {
   }
   console.log(`[aai] DELETE /v2/transcript/${opts.transcriptId} status=${response.status} ok=${ok}`);
   return { ok, status: response.status, detail };
+}
+
+// src/services/speechAudio.ts
+var import_path = __toESM(require("path"), 1);
+var SPEECH_AUDIO_BITRATE = "96k";
+var SPEECH_AUDIO_CHANNELS = 1;
+var VIDEO_EXT = /* @__PURE__ */ new Set([
+  ".mp4",
+  ".mov",
+  ".mpg",
+  ".mpeg",
+  ".avi",
+  ".mkv",
+  ".wmv",
+  ".webm",
+  ".3gp",
+  ".ts",
+  ".m2ts"
+]);
+function extensionOf(name) {
+  return import_path.default.extname(name || "").toLowerCase();
+}
+function needsSpeechConversion(source) {
+  const mime = (source.mimeType || "").toLowerCase();
+  if (mime.startsWith("video/")) return true;
+  if (mime === "audio/wav" || mime === "audio/x-wav" || mime === "audio/wave" || mime === "audio/vnd.wave") return true;
+  const ext = extensionOf(source.originalName) || extensionOf(source.filename);
+  const fileExt = extensionOf(source.filename);
+  if (ext === ".wav" || fileExt === ".wav") return true;
+  return VIDEO_EXT.has(ext) || VIDEO_EXT.has(fileExt);
+}
+function isConvertedSpeechFile(originalFilename, transcriptionFilename) {
+  if (!transcriptionFilename) return false;
+  if (transcriptionFilename === originalFilename) return false;
+  return extensionOf(transcriptionFilename) === ".mp3";
+}
+function uploadTargetIsSpeechAudio(source, uploadFilename) {
+  if (!needsSpeechConversion(source)) return true;
+  return isConvertedSpeechFile(source.filename, uploadFilename);
+}
+function assertSpeechUploadTarget(source, uploadFilename) {
+  if (uploadTargetIsSpeechAudio(source, uploadFilename)) return;
+  throw new Error("Refusing to upload the original video or WAV. The converted speech MP3 is not ready.");
 }
 
 // src/services/geminiService.ts
@@ -39311,20 +39555,79 @@ ${transcriptBlock}
 var GEMINI_MODEL_ID = GEMINI_MODEL;
 
 // src/services/polling.ts
+var TRANSIENT_NET_CODES = /* @__PURE__ */ new Set([
+  "ECONNRESET",
+  "ECONNREFUSED",
+  "EPIPE",
+  "ETIMEDOUT",
+  "EAI_AGAIN",
+  "ENETUNREACH",
+  "EHOSTUNREACH",
+  "ECONNABORTED",
+  "ENETRESET"
+]);
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+function errorCodes(error) {
+  const codes = [];
+  const seen = /* @__PURE__ */ new Set();
+  let current = error;
+  while (current && typeof current === "object" && !seen.has(current)) {
+    seen.add(current);
+    if (current.code) codes.push(String(current.code));
+    current = current.cause;
+  }
+  return codes;
+}
+function isTransientClientError(error) {
+  const message2 = String(error?.message || "").trim().toLowerCase();
+  if (message2 === "failed to fetch" || message2 === "fetch failed" || message2 === "load failed" || message2.includes("networkerror when attempting to fetch")) {
+    return true;
+  }
+  return errorCodes(error).some((code) => code.startsWith("UND_ERR_") || TRANSIENT_NET_CODES.has(code));
+}
+function lostContactError(error) {
+  const message2 = error instanceof Error ? error.message : "Failed to fetch";
+  const code = errorCodes(error)[0];
+  const wrapped = new Error(
+    `Lost contact with the local Narrative AI server (${message2}${code ? `, ${code}` : ""}). If an upload was running, use Retry. The recording is still on this computer.`
+  );
+  wrapped.cause = error;
+  return wrapped;
 }
 async function pollWithBackoff(opts) {
   const started = Date.now();
   const timeoutMs = opts.timeoutMs ?? 3 * 60 * 60 * 1e3;
   let delay = opts.initialDelayMs ?? 2e3;
   const maxDelay = opts.maxDelayMs ?? 3e4;
+  const maxTransientRetries = opts.maxTransientRetries ?? 4;
+  const wait = opts.sleepImpl ?? sleep;
   let attempt = 0;
+  let transientStreak = 0;
   for (; ; ) {
     if (Date.now() - started > timeoutMs) {
       throw new Error(`Timed out after ${Math.round(timeoutMs / 1e3)} seconds.`);
     }
-    const value = await opts.poll();
+    let value;
+    try {
+      value = await opts.poll();
+    } catch (error) {
+      if (isTransientClientError(error) && transientStreak < maxTransientRetries) {
+        transientStreak += 1;
+        opts.onTransientError?.(error, transientStreak, maxTransientRetries);
+        const remaining2 = timeoutMs - (Date.now() - started);
+        if (remaining2 <= 0) {
+          throw new Error(`Timed out after ${Math.round(timeoutMs / 1e3)} seconds.`);
+        }
+        const transientDelay = Math.min(5e3, 400 * 2 ** (transientStreak - 1));
+        await wait(Math.min(transientDelay, remaining2));
+        continue;
+      }
+      if (isTransientClientError(error)) throw lostContactError(error);
+      throw error;
+    }
+    transientStreak = 0;
     attempt += 1;
     opts.onUpdate?.(value, attempt);
     if (opts.isDone(value)) return value;
@@ -39332,7 +39635,7 @@ async function pollWithBackoff(opts) {
     if (remaining <= 0) {
       throw new Error(`Timed out after ${Math.round(timeoutMs / 1e3)} seconds.`);
     }
-    await sleep(Math.min(delay, remaining));
+    await wait(Math.min(delay, remaining));
     delay = Math.min(maxDelay, Math.round(delay * 1.5));
   }
 }
@@ -39386,7 +39689,7 @@ process.on("message", (msg) => {
   }
   if (msg.type === "allow-paths" && Array.isArray(msg.paths)) {
     for (const entry of msg.paths) {
-      if (typeof entry === "string" && entry.trim()) allowedImportPaths.add(import_path.default.resolve(entry));
+      if (typeof entry === "string" && entry.trim()) allowedImportPaths.add(import_path2.default.resolve(entry));
     }
     if (process.send) process.send({ type: "paths-allowed", id: msg.id });
   }
@@ -39401,7 +39704,7 @@ var getDirname = () => {
   } catch (e) {
   }
   try {
-    return import_path.default.dirname((0, import_url.fileURLToPath)(import_meta.url));
+    return import_path2.default.dirname((0, import_url.fileURLToPath)(import_meta.url));
   } catch (e) {
     return process.cwd();
   }
@@ -39413,8 +39716,8 @@ if (process.env.FFPROBE_PATH) import_fluent_ffmpeg.default.setFfprobePath(proces
 var getDatabase = (dbPath2) => {
   if (isProduction) {
     const possibleNativePaths = [
-      import_path.default.join(_dirname, "node_modules", "better-sqlite3", "build", "Release", "better_sqlite3.node"),
-      import_path.default.join(process.cwd(), "resources", "app.asar.unpacked", "node_modules", "better-sqlite3", "build", "Release", "better_sqlite3.node")
+      import_path2.default.join(_dirname, "node_modules", "better-sqlite3", "build", "Release", "better_sqlite3.node"),
+      import_path2.default.join(process.cwd(), "resources", "app.asar.unpacked", "node_modules", "better-sqlite3", "build", "Release", "better_sqlite3.node")
     ];
     for (const nativePath of possibleNativePaths) {
       if (import_fs2.default.existsSync(nativePath)) {
@@ -39426,25 +39729,66 @@ var getDatabase = (dbPath2) => {
   return new import_better_sqlite3.default(dbPath2);
 };
 var userDataPath = process.env.APP_USER_DATA_PATH || process.cwd();
-var dbPath = import_path.default.join(userDataPath, "narrative.db");
+var dbPath = import_path2.default.join(userDataPath, "narrative.db");
 var db = getDatabase(dbPath);
-var uploadDir = import_path.default.join(userDataPath, "uploads");
+var uploadDir = import_path2.default.join(userDataPath, "uploads");
 if (!import_fs2.default.existsSync(uploadDir)) import_fs2.default.mkdirSync(uploadDir, { recursive: true });
 var conversionJobs = /* @__PURE__ */ new Map();
-var extractAudio = (inputPath, outputPath, jobId) => {
+var conversionByOutput = /* @__PURE__ */ new Map();
+var extractAudio = (inputPath, outputPath, onProgress) => {
   return new Promise((resolve, reject) => {
-    if (jobId) conversionJobs.set(jobId, 0);
-    (0, import_fluent_ffmpeg.default)(inputPath).toFormat("mp3").on("progress", (progress) => {
-      if (jobId && progress.percent) conversionJobs.set(jobId, Math.round(progress.percent));
-    }).on("end", () => {
-      if (jobId) conversionJobs.set(jobId, 100);
-      resolve();
-    }).on("error", (err) => {
-      if (jobId) conversionJobs.delete(jobId);
-      reject(err);
-    }).save(outputPath);
+    onProgress?.(0);
+    (0, import_fluent_ffmpeg.default)(inputPath).noVideo().audioChannels(SPEECH_AUDIO_CHANNELS).audioBitrate(SPEECH_AUDIO_BITRATE).audioCodec("libmp3lame").toFormat("mp3").on("progress", (progress) => {
+      if (progress.percent != null && !Number.isNaN(progress.percent)) {
+        onProgress?.(Math.max(0, Math.min(99, Math.round(progress.percent))));
+      }
+    }).on("end", () => resolve()).on("error", (err) => reject(err)).save(outputPath);
   });
 };
+function beginConversion(jobId, inputPath, outputFilename, afterFile) {
+  const existing = conversionJobs.get(jobId);
+  if (existing?.resultPromise && !existing.error && existing.progress < 100) return existing.resultPromise;
+  const outputPath = import_path2.default.join(uploadDir, outputFilename);
+  const state = {
+    progress: 0,
+    outputFilename,
+    resultPromise: Promise.resolve(outputPath)
+  };
+  const resultPromise = extractAudio(inputPath, outputPath, (pct) => {
+    state.progress = pct;
+  }).then(() => {
+    const size = import_fs2.default.existsSync(outputPath) ? import_fs2.default.statSync(outputPath).size : 0;
+    if (!size) throw new Error("Converted speech audio is empty.");
+    afterFile?.();
+    state.progress = 100;
+    return outputPath;
+  }).catch((err) => {
+    state.error = err?.message || "Audio conversion failed";
+    console.error("[convert] failed:", state.error);
+    throw err;
+  });
+  state.resultPromise = resultPromise;
+  conversionJobs.set(jobId, state);
+  const finished = resultPromise.then(() => void 0);
+  finished.catch(() => {
+  });
+  conversionByOutput.set(outputFilename, finished);
+  return resultPromise;
+}
+function conversionProgressPayload(id) {
+  const job = conversionJobs.get(id);
+  if (job?.error) {
+    return { status: 500, body: { error: `Audio conversion failed: ${job.error}`, progress: job.progress, status: "error" } };
+  }
+  if (job) {
+    return { status: 200, body: { progress: job.progress, status: job.progress >= 100 ? "completed" : "processing" } };
+  }
+  const recording = db.prepare("SELECT filename, transcription_filename FROM recordings WHERE id = ?").get(id);
+  if (recording && isConvertedSpeechFile(recording.filename || "", recording.transcription_filename)) {
+    return { status: 200, body: { progress: 100, status: "completed" } };
+  }
+  return { status: 404, body: { error: "Job not found" } };
+}
 db.exec(`
   CREATE TABLE IF NOT EXISTS cases (
     id TEXT PRIMARY KEY,
@@ -39529,7 +39873,7 @@ var storage = import_multer.default.diskStorage({
     cb(null, uploadDir);
   },
   filename: (_req, file, cb) => {
-    cb(null, `${v4_default()}${import_path.default.extname(file.originalname)}`);
+    cb(null, `${v4_default()}${import_path2.default.extname(file.originalname)}`);
   }
 });
 var upload = (0, import_multer.default)({ storage });
@@ -39581,7 +39925,7 @@ function requireLocalAuth(req, res, next) {
 }
 function safeBasename(name) {
   if (typeof name !== "string" || !name.trim()) return null;
-  const base = import_path.default.basename(name);
+  const base = import_path2.default.basename(name);
   if (base !== name || base === "." || base === ".." || base.includes("\0")) return null;
   return base;
 }
@@ -39617,7 +39961,7 @@ function readStoredTranscript(recordingId) {
 }
 var MEDIA_EXT = /* @__PURE__ */ new Set([".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg", ".wma", ".mp2", ".amr", ".mp4", ".mov", ".mpg", ".mpeg", ".avi", ".mkv", ".wmv", ".webm", ".3gp", ".ts", ".m2ts"]);
 async function copyChosenMedia(sourcePath) {
-  const resolved = import_path.default.resolve(sourcePath);
+  const resolved = import_path2.default.resolve(sourcePath);
   if (!allowedImportPaths.has(resolved)) {
     const error = new Error("That file was not chosen in the desktop app.");
     error.status = 403;
@@ -39625,15 +39969,15 @@ async function copyChosenMedia(sourcePath) {
   }
   allowedImportPaths.delete(resolved);
   if (!import_fs2.default.existsSync(resolved) || !import_fs2.default.statSync(resolved).isFile()) throw new Error("File not found.");
-  const ext = import_path.default.extname(resolved).toLowerCase();
+  const ext = import_path2.default.extname(resolved).toLowerCase();
   if (!MEDIA_EXT.has(ext)) throw new Error("That file type is not a supported recording.");
   if (!import_fs2.default.existsSync(uploadDir)) import_fs2.default.mkdirSync(uploadDir, { recursive: true });
   const filename = `${v4_default()}${ext}`;
-  const filePath = import_path.default.join(uploadDir, filename);
+  const filePath = import_path2.default.join(uploadDir, filename);
   await import_fs2.default.promises.copyFile(resolved, filePath);
   const size = import_fs2.default.statSync(filePath).size;
   const mimetype = ext === ".mp4" || ext === ".mov" || ext === ".avi" || ext === ".mkv" || ext === ".webm" || ext === ".wmv" || ext === ".mpg" || ext === ".mpeg" || ext === ".3gp" || ext === ".ts" || ext === ".m2ts" ? "video/mp4" : ext === ".wav" ? "audio/wav" : "audio/mpeg";
-  return { filename, originalname: import_path.default.basename(resolved), mimetype, size, filePath };
+  return { filename, originalname: import_path2.default.basename(resolved), mimetype, size, filePath };
 }
 function probeDurationMs(filePath) {
   return new Promise((resolve, reject) => {
@@ -39655,7 +39999,7 @@ function backupDatabase() {
     console.error("[DB] checkpoint failed:", error);
   }
   const stamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
-  const dest = import_path.default.join(import_path.default.dirname(dbPath), `narrative-backup-${stamp}.db`);
+  const dest = import_path2.default.join(import_path2.default.dirname(dbPath), `narrative-backup-${stamp}.db`);
   import_fs2.default.copyFileSync(dbPath, dest);
   console.log(`[DB] Backup written to ${dest}`);
   return dest;
@@ -39688,16 +40032,54 @@ function geminiFor() {
     };
   };
 }
-function audioPathForRequest(body) {
-  if (body.recordingId) {
+async function speechFileForRecording(recording, preferredOutput) {
+  const source = {
+    filename: recording.filename,
+    mimeType: recording.mime_type,
+    originalName: recording.original_name
+  };
+  const currentName = recording.transcription_filename || recording.filename;
+  if (!needsSpeechConversion(source)) return import_path2.default.join(uploadDir, currentName);
+  if (isConvertedSpeechFile(recording.filename, recording.transcription_filename)) {
+    const ready = import_path2.default.join(uploadDir, recording.transcription_filename);
+    if (import_fs2.default.existsSync(ready) && import_fs2.default.statSync(ready).size > 0) return ready;
+  }
+  const existing = conversionJobs.get(recording.id);
+  if (existing?.resultPromise && !existing.error && existing.progress < 100) {
+    console.log(`[aai] waiting for speech conversion of ${recording.filename}`);
+    return existing.resultPromise;
+  }
+  const outputFilename = preferredOutput || `${v4_default()}.mp3`;
+  const inputPath = import_path2.default.join(uploadDir, recording.filename);
+  return beginConversion(recording.id, inputPath, outputFilename, () => {
+    db.prepare("UPDATE recordings SET transcription_filename = ? WHERE id = ?").run(outputFilename, recording.id);
+  });
+}
+async function resolveAudioForTranscription(body) {
+  if (body?.recordingId) {
     const recording = db.prepare("SELECT * FROM recordings WHERE id = ?").get(body.recordingId);
     if (!recording) throw new Error("Recording not found");
-    const filename2 = recording.transcription_filename || recording.filename;
-    return { filePath: import_path.default.join(uploadDir, filename2), recordingId: recording.id };
+    const filePath2 = await speechFileForRecording(recording);
+    if (!import_fs2.default.existsSync(filePath2) || !import_fs2.default.statSync(filePath2).size) throw new Error("Audio file not found for transcription.");
+    assertSpeechUploadTarget({
+      filename: recording.filename,
+      mimeType: recording.mime_type,
+      originalName: recording.original_name
+    }, import_path2.default.basename(filePath2));
+    return { filePath: filePath2, recordingId: recording.id };
   }
-  const filename = safeBasename(body.filename);
+  const filename = safeBasename(body?.filename);
   if (!filename) throw new Error("A recording id or file name is required.");
-  return { filePath: import_path.default.join(uploadDir, filename), recordingId: null };
+  const pending = conversionByOutput.get(filename);
+  if (pending) await pending;
+  let filePath = import_path2.default.join(uploadDir, filename);
+  if (needsSpeechConversion({ filename })) {
+    const outputFilename = `${v4_default()}.mp3`;
+    filePath = await beginConversion(`file:${filename}`, filePath, outputFilename);
+  }
+  if (!import_fs2.default.existsSync(filePath) || !import_fs2.default.statSync(filePath).size) throw new Error("Audio file not found for transcription.");
+  assertSpeechUploadTarget({ filename }, import_path2.default.basename(filePath));
+  return { filePath, recordingId: null };
 }
 function createApp() {
   const app = (0, import_express.default)();
@@ -39891,15 +40273,18 @@ function createApp() {
     const isWav = mimetype === "audio/wav" || mimetype === "audio/x-wav" || originalname.toLowerCase().endsWith(".wav");
     if (isVideo || isWav) {
       const audioFilename = `${v4_default()}.mp3`;
-      const audioPath = import_path.default.join(uploadDir, audioFilename);
-      extractAudio(filePath, audioPath, id).then(() => {
-        db.prepare("UPDATE recordings SET transcription_filename = ? WHERE id = ?").run(audioFilename, id);
-      }).catch((err) => console.error("Background conversion failed:", err));
       db.prepare(`
         INSERT INTO recordings (id, case_id, filename, transcription_filename, original_name, mime_type, size)
         VALUES (?, ?, ?, ?, ?, ?, ?)
       `).run(id, caseId, filename, filename, originalname, mimetype, size);
-      return res.json({ id, filename, transcriptionFilename: filename, originalname, mimetype, size, status: "converting" });
+      speechFileForRecording({
+        id,
+        filename,
+        transcription_filename: filename,
+        mime_type: mimetype,
+        original_name: originalname
+      }, audioFilename).catch((err) => console.error("Background conversion failed:", err));
+      return res.json({ id, filename, transcriptionFilename: audioFilename, originalname, mimetype, size, status: "converting" });
     }
     db.prepare(`
       INSERT INTO recordings (id, case_id, filename, transcription_filename, original_name, mime_type, size)
@@ -39911,25 +40296,18 @@ function createApp() {
     const { id } = req.params;
     const recording = db.prepare("SELECT * FROM recordings WHERE id = ?").get(id);
     if (!recording) return res.status(404).json({ error: "Recording not found" });
-    const inputPath = import_path.default.join(uploadDir, recording.filename);
-    const audioFilename = `${v4_default()}.mp3`;
-    const audioPath = import_path.default.join(uploadDir, audioFilename);
-    extractAudio(inputPath, audioPath, id).then(() => {
-      db.prepare("UPDATE recordings SET transcription_filename = ? WHERE id = ?").run(audioFilename, id);
-    }).catch((err) => console.error("On-demand conversion failed:", err));
+    const existing = conversionJobs.get(id);
+    if (!(existing?.resultPromise && !existing.error && existing.progress < 100)) {
+      const audioFilename = `${v4_default()}.mp3`;
+      beginConversion(id, import_path2.default.join(uploadDir, recording.filename), audioFilename, () => {
+        db.prepare("UPDATE recordings SET transcription_filename = ? WHERE id = ?").run(audioFilename, id);
+      }).catch((err) => console.error("On-demand conversion failed:", err));
+    }
     res.json({ success: true, jobId: id });
   });
   app.get("/api/recordings/:id/convert/progress", (req, res) => {
-    const { id } = req.params;
-    const progress = conversionJobs.get(id);
-    if (progress === void 0) {
-      const recording = db.prepare("SELECT * FROM recordings WHERE id = ?").get(id);
-      if (recording && recording.transcription_filename !== recording.filename) {
-        return res.json({ progress: 100, status: "completed" });
-      }
-      return res.status(404).json({ error: "Job not found" });
-    }
-    res.json({ progress, status: progress === 100 ? "completed" : "processing" });
+    const payload = conversionProgressPayload(req.params.id);
+    res.status(payload.status).json(payload.body);
   });
   app.post("/api/upload", upload.single("file"), async (req, res) => {
     if (!req.file) return res.status(400).json({ error: "No file uploaded" });
@@ -39938,17 +40316,15 @@ function createApp() {
     const isWav = mimetype === "audio/wav" || mimetype === "audio/x-wav" || originalname.toLowerCase().endsWith(".wav");
     if (isVideo || isWav) {
       const audioFilename = `${v4_default()}.mp3`;
-      const audioPath = import_path.default.join(uploadDir, audioFilename);
       const jobId = v4_default();
-      extractAudio(filePath, audioPath, jobId).catch((err) => console.error("Background upload conversion failed:", err));
+      beginConversion(jobId, filePath, audioFilename).catch((err) => console.error("Background upload conversion failed:", err));
       return res.json({ filename, transcriptionFilename: audioFilename, originalname, mimetype, size, status: "converting", jobId });
     }
     res.json({ filename, transcriptionFilename: filename, originalname, mimetype, size, status: "ready" });
   });
   app.get("/api/jobs/:id/progress", (req, res) => {
-    const progress = conversionJobs.get(req.params.id);
-    if (progress === void 0) return res.status(404).json({ error: "Job not found" });
-    res.json({ progress, status: progress === 100 ? "completed" : "processing" });
+    const payload = conversionProgressPayload(req.params.id);
+    res.status(payload.status).json(payload.body);
   });
   app.get("/api/recordings/:id", (req, res) => {
     const recording = db.prepare(`SELECT ${RECORDING_META_SQL} FROM recordings WHERE id = ?`).get(req.params.id);
@@ -40064,14 +40440,26 @@ function createApp() {
     res.json({ jobId });
     (async () => {
       const settings = getSettings();
-      const { filePath, recordingId } = audioPathForRequest(req.body || {});
-      if (!import_fs2.default.existsSync(filePath)) throw new Error("Audio file not found for transcription.");
+      job.message = "Preparing speech audio\u2026";
+      job.progress = 8;
+      const { filePath, recordingId } = await resolveAudioForTranscription(req.body || {});
       job.message = "Uploading audio to AssemblyAI\u2026";
       job.progress = 15;
       const uploadUrl = await streamUploadAudio({
         filePath,
         apiKey: secrets.assemblyai,
-        apiBase: resolveApiBase(settings)
+        apiBase: resolveApiBase(settings),
+        onProgress: ({ loaded, total, attempt, attempts }) => {
+          const ratio = total > 0 ? Math.min(1, loaded / total) : 0;
+          const pct = Math.round(ratio * 100);
+          job.progress = 15 + Math.round(ratio * 20);
+          const retryNote = attempt > 1 ? ` (attempt ${attempt}/${attempts})` : "";
+          job.message = `Uploading audio to AssemblyAI\u2026 ${pct}%${retryNote}`;
+        },
+        onRetry: ({ nextAttempt, attempts, reason }) => {
+          job.message = `Upload failed (${reason}). Retrying ${nextAttempt}/${attempts}\u2026`;
+          console.error(`[aai] ${job.message}`);
+        }
       });
       job.message = "Starting transcription\u2026";
       job.progress = 35;
@@ -40115,10 +40503,16 @@ function createApp() {
       job.message = "Transcription saved locally";
       job.transcriptId = transcript.id || started.id;
     })().catch((error) => {
-      console.error("[aai] transcription job failed:", error?.message || error);
+      const message2 = error?.message || "Transcription failed";
+      const diagnostic = formatCauseChain(error);
+      const stored = diagnostic ? `${message2} [${diagnostic}]` : message2;
+      console.error("[aai] transcription job failed:", stored);
+      if (error?.cause) {
+        console.error("[aai] cause:", error.cause?.code || error.cause?.name || "", error.cause?.message || error.cause);
+      }
       job.status = "error";
-      job.error = error?.message || "Transcription failed";
-      job.message = job.error;
+      job.error = stored;
+      job.message = message2;
     });
   });
   app.get("/api/aai/transcribe-jobs/:jobId", (req, res) => {
@@ -40378,18 +40772,20 @@ function createApp() {
   });
   app.post("/api/recordings/:id/transcribe-local", (req, res) => {
     const { id } = req.params;
-    const recording = db.prepare("SELECT id, filename, transcription_filename FROM recordings WHERE id = ?").get(id);
+    const recording = db.prepare("SELECT * FROM recordings WHERE id = ?").get(id);
     if (!recording) return res.status(404).json({ error: "Recording not found" });
-    const audioFilename = recording.transcription_filename || recording.filename;
-    const audioPath = import_path.default.join(uploadDir, audioFilename);
-    if (!import_fs2.default.existsSync(audioPath)) return res.status(404).json({ error: "Audio file not found for transcription." });
+    if (!import_fs2.default.existsSync(import_path2.default.join(uploadDir, recording.filename))) {
+      return res.status(404).json({ error: "Audio file not found for transcription." });
+    }
     const jobId = v4_default();
     const job = { status: "running", progress: 1, message: "Preparing local transcription\u2026" };
     trackJob(jobId, job);
     res.json({ jobId });
     (async () => {
-      const tempDir = import_path.default.join(uploadDir, `whisper-${jobId}`);
+      const tempDir = import_path2.default.join(uploadDir, `whisper-${jobId}`);
       try {
+        job.message = "Preparing speech audio\u2026";
+        const audioPath = await speechFileForRecording(recording);
         const durationMs = await probeDurationMs(audioPath);
         if (!durationMs) throw new Error("Could not read the recording length.");
         const plans = planWhisperSegments(durationMs);
@@ -40401,7 +40797,7 @@ function createApp() {
         for (const plan of plans) {
           job.message = `Segment ${plan.index + 1} of ${plans.length}`;
           job.progress = Math.max(1, Math.round(plan.index / plans.length * 90));
-          const wavPath = import_path.default.join(tempDir, `${plan.index}.wav`);
+          const wavPath = import_path2.default.join(tempDir, `${plan.index}.wav`);
           await extractWavSegment(audioPath, wavPath, plan.startMs, Math.max(1, plan.endMs - plan.startMs));
           const audio = wavPcm16ToFloat32(import_fs2.default.readFileSync(wavPath));
           try {
@@ -40464,12 +40860,18 @@ function createApp() {
         VALUES (?, ?, ?, ?, ?, ?, ?)
       `).run(id, caseId, filename, filename, originalname, mimetype, size);
       if (isVideo || isWav) {
-        extractAudio(filePath, import_path.default.join(uploadDir, transcriptionFilename), id).then(() => db.prepare("UPDATE recordings SET transcription_filename = ? WHERE id = ?").run(transcriptionFilename, id)).catch((err) => console.error("Import conversion failed:", err));
+        speechFileForRecording({
+          id,
+          filename,
+          transcription_filename: filename,
+          mime_type: mimetype,
+          original_name: originalname
+        }, transcriptionFilename).catch((err) => console.error("Import conversion failed:", err));
       }
-      return res.json({ id, filename, transcriptionFilename: filename, originalname, mimetype, size, status });
+      return res.json({ id, filename, transcriptionFilename, originalname, mimetype, size, status });
     }
     if ((isVideo || isWav) && jobId) {
-      extractAudio(filePath, import_path.default.join(uploadDir, transcriptionFilename), jobId).catch((err) => console.error("Import conversion failed:", err));
+      beginConversion(jobId, filePath, transcriptionFilename).catch((err) => console.error("Import conversion failed:", err));
     }
     return res.json({ filename, transcriptionFilename, originalname, mimetype, size, status, jobId });
   }
@@ -40502,7 +40904,7 @@ function createApp() {
   });
   app.post("/api/maintenance/regress", async (_req, res) => {
     try {
-      const result = await runRegression({ samplesDir: import_path.default.join(userDataPath, "regression-samples") });
+      const result = await runRegression({ samplesDir: import_path2.default.join(userDataPath, "regression-samples") });
       res.json(result);
     } catch (error) {
       logMemory("regress-error");
@@ -40532,10 +40934,10 @@ async function startServer() {
     app.use(vite.middlewares);
   } else {
     const appPath = process.env.APP_PATH || process.cwd();
-    const distPath = import_path.default.join(appPath, "dist");
+    const distPath = import_path2.default.join(appPath, "dist");
     app.use(import_express.default.static(distPath));
     app.get("*", (_req, res) => {
-      res.sendFile(import_path.default.join(distPath, "index.html"));
+      res.sendFile(import_path2.default.join(distPath, "index.html"));
     });
   }
   const host = "127.0.0.1";

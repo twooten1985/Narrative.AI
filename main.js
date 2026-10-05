@@ -1,4 +1,5 @@
 import { app, BrowserWindow, session, ipcMain, safeStorage, dialog } from 'electron';
+import { createRequire } from 'module';
 import path from 'path';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
@@ -24,6 +25,8 @@ app.commandLine.appendSwitch('js-flags', '--max-old-space-size=4096');
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const require = createRequire(import.meta.url);
+const appVersion = require('./package.json').version;
 
 // Keep the existing database and settings in %APPDATA%\react-example even though
 // productName is "Narrative AI".
@@ -145,6 +148,7 @@ function pushSecrets() {
 }
 
 log('--- APP SESSION START ---');
+log(`Version: ${appVersion}`);
 log(`App Path: ${app.getAppPath()}`);
 log(`UserData Path: ${logDir}`);
 log(`Is Packaged: ${app.isPackaged}`);
@@ -252,7 +256,7 @@ function createWindow(port) {
     width: 1280,
     height: 800,
     show: false,
-    title: 'Narrative AI',
+    title: `Narrative AI ${appVersion}`,
     icon: path.join(__dirname, 'icon.png'),
     webPreferences: {
       nodeIntegration: false,
@@ -452,6 +456,11 @@ if (!gotTheLock) {
   });
 
   app.on('ready', async () => {
+    app.setAboutPanelOptions({
+      applicationName: 'Narrative AI',
+      applicationVersion: appVersion,
+      version: appVersion,
+    });
     loadSecrets();
     registerIpc();
     session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {

@@ -22,6 +22,7 @@ import {
   ExternalLink,
   Download,
   AlertCircle,
+  RotateCcw,
   Search,
   Copy,
   Check,
@@ -48,6 +49,7 @@ import { buildPrintableReportHtml } from './services/reportHtml';
 import { reportToDocxBlob } from './services/reportDocx';
 import { AI_DISCLAIMER, formatAuditLine, formatGeneratedAt } from './services/audit';
 import { getElectron } from './electron-bridge';
+import { APP_VERSION } from './version';
 import { DEFAULT_AAI_API_BASE, DEFAULT_LLM_GATEWAY_URL } from './services/config';
 
 export const getAssemblyAISummary = (transcript: any): string => {
@@ -142,6 +144,7 @@ function AppContent() {
   const [massConcurrency, setMassConcurrency] = useState(2);
   const [preferAssemblySummary, setPreferAssemblySummary] = useState(localStorage.getItem('prefer_assembly_summary') === 'true');
   const [reportError, setReportError] = useState<string | null>(null);
+  const [transcriptionError, setTranscriptionError] = useState<string | null>(null);
   const [timelineError, setTimelineError] = useState<string | null>(null);
   const [timelineMeta, setTimelineMeta] = useState<ReportMeta | null>(null);
   const [cleanMessage, setCleanMessage] = useState<string | null>(null);
@@ -388,6 +391,10 @@ function AppContent() {
     setMediaError(null);
     setUseAudioFallback(false);
   }, [selectedRecording]);
+
+  useEffect(() => {
+    setTranscriptionError(null);
+  }, [selectedRecording?.id]);
 
   const handleMediaError = (e: React.SyntheticEvent<HTMLMediaElement, Event>) => {
     const target = e.currentTarget;
@@ -922,6 +929,7 @@ function AppContent() {
     }
     setIsProcessing(true);
     setReportError(null);
+    setTranscriptionError(null);
     setProcessingProgress(10);
     try {
       if (localWhisperMode) {
@@ -959,13 +967,14 @@ function AppContent() {
       await fetchCaseDetails(selectedCase!.id);
       setSelectedRecording(await apiFetch(`/api/recordings/${selectedRecording.id}`));
     } catch (error: any) {
-      const msg = error.message || '';
+      const msg = error?.message || 'Transcription failed';
+      console.error('Transcription failed:', error);
       if (msg.toLowerCase().includes('insufficient funds') || msg.toLowerCase().includes('balance')) {
-        alert('AssemblyAI Error: Insufficient funds. Please check your account balance at assemblyai.com.');
+        setTranscriptionError('AssemblyAI rejected the upload because the account balance is too low. The recording is still on this computer. Add funds at assemblyai.com, then retry.');
       } else if (msg.toLowerCase().includes('api key is disabled')) {
-        alert('AssemblyAI Error: Your API key is disabled. Please check your account at assemblyai.com.');
+        setTranscriptionError('AssemblyAI says this API key is disabled. Open Settings and check the key, then retry. The recording is still on this computer.');
       } else {
-        alert('Error during transcription: ' + msg);
+        setTranscriptionError(msg);
       }
     } finally {
       setIsProcessing(false);
@@ -1094,7 +1103,10 @@ function AppContent() {
           <div className="w-8 h-8 bg-orange-500 rounded-lg flex items-center justify-center">
             <BarChart3 size={18} className="text-white" />
           </div>
-          <h1 className="text-lg font-bold tracking-tight">Narrative AI</h1>
+          <div>
+            <h1 className="text-lg font-bold tracking-tight">Narrative AI</h1>
+            <p className="text-[10px] uppercase tracking-widest text-white/35">Version {APP_VERSION}</p>
+          </div>
         </div>
 
         <div className="p-4 flex-1 overflow-y-auto space-y-2">
@@ -1319,7 +1331,7 @@ function AppContent() {
                   </div>
                   <div>
                     <h3 className="text-xl font-bold">Settings</h3>
-                    <p className="text-xs text-white/40">Configure application keys and custom prompts</p>
+                    <p className="text-xs text-white/40">Narrative AI {APP_VERSION}. Configure application keys and custom prompts.</p>
                   </div>
                 </div>
 
@@ -2126,6 +2138,20 @@ function AppContent() {
                                 <FileText size={48} className="text-white/10 mb-4" />
                                 <p className="text-white/40 mb-6">No transcript available for this recording</p>
                                 
+                                {transcriptionError && !isProcessing && (
+                                  <div className="w-full max-w-md mx-auto mb-4 rounded-2xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-100 space-y-3 text-left">
+                                    <div className="flex items-start gap-2">
+                                      <AlertCircle size={16} className="text-red-400 mt-0.5 shrink-0" />
+                                      <p>{transcriptionError}</p>
+                                    </div>
+                                    <button
+                                      onClick={handleTranscribe}
+                                      className="px-3 py-1.5 rounded-lg bg-white text-black text-xs font-bold inline-flex items-center gap-1"
+                                    >
+                                      <RotateCcw size={12} /> Retry upload
+                                    </button>
+                                  </div>
+                                )}
                                 {isProcessing ? (
                                   <div className="w-full max-w-md px-8 space-y-4">
                                     <div className="flex items-center justify-between text-[10px] font-bold uppercase tracking-widest text-orange-500">
@@ -2140,7 +2166,7 @@ function AppContent() {
                                       />
                                     </div>
                                   </div>
-                                ) : (
+                                ) : !transcriptionError && (
                                   <button 
                                     onClick={handleTranscribe}
                                     disabled={isProcessing}

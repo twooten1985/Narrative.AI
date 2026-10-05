@@ -1,7 +1,7 @@
 {
   "name": "react-example",
   "private": true,
-  "version": "6.1.2",
+  "version": "6.1.3",
   "description": "A professional transcription and forensic analysis tool for law enforcement, featuring AssemblyAI integration, speaker labeling, and APOD (Analysis of Patterns of Denial) reporting.",
   "author": "Narrative.AI Team",
   "type": "module",
@@ -16,7 +16,7 @@
     "regress": "tsx src/regression/runRegression.ts",
     "start": "node server.ts",
     "rebuild": "electron-rebuild -f -w better-sqlite3",
-    "build:server": "esbuild server.ts --bundle --platform=node --target=node22 --outfile=server.cjs --external:vite --external:@huggingface/transformers --format=cjs && esbuild src/services/keyStore.ts --platform=node --format=cjs --outfile=electron/keyStore.cjs",
+    "build:server": "esbuild server.ts --bundle --platform=node --target=node22 --outfile=server.cjs --external:vite --external:@huggingface/transformers --external:undici --format=cjs && esbuild src/services/keyStore.ts --platform=node --format=cjs --outfile=electron/keyStore.cjs",
     "build:all": "npm run build && npm run build:server",
     "electron:pack": "npm run build:all && electron-builder build --win --dir",
     "electron:dist": "npm run build:all && electron-builder build --win"
@@ -50,6 +50,7 @@
     "react-dropzone": "^15.0.0",
     "react-markdown": "^10.1.0",
     "recharts": "^3.8.1",
+    "undici": "^7.30.0",
     "uuid": "^13.0.0",
     "vite": "^6.2.0"
   },
@@ -72,6 +73,7 @@
   "build": {
     "appId": "com.narrativeai.app",
     "productName": "Narrative AI",
+    "buildVersion": "6.1.3",
     "directories": {
       "output": "dist-electron"
     },

@@ -33,7 +33,9 @@ npm run electron:dist
 
 Electron stays on 31 so the existing Windows `better-sqlite3` build is unchanged. The user-data directory remains `%APPDATA%\react-example`.
 
-Version 6.1.2. Large recordings are streamed and paged. The renderer does not hold the audio or the full word list. Local Whisper transcribes 10-minute segments. Mass processing runs two files at a time unless Settings changes it (maximum 4). A long recording is summarized in pieces, and a report that hits the model length limit is continued and merged so the final section is saved, shown, and exported.
+Version 6.1.3. Large recordings are streamed and paged. The renderer does not hold the audio or the full word list. Local Whisper transcribes 10-minute segments. Mass processing runs two files at a time unless Settings changes it (maximum 4). A long recording is summarized in pieces, and a report that hits the model length limit is continued and merged so the final section is saved, shown, and exported.
+
+AssemblyAI uploads use a 3-hour undici timeout (the default 300 second header timeout was aborting slow mobile uploads) and retry the whole file up to 4 times when the connection drops. Video and WAV are converted to 96 kbps mono MP3 before that upload. The Electron product version is package.json `version` (6.1.3), which electron-builder writes as the Windows ProductVersion; `build.buildVersion` is the FileVersion.
 
 ## Checks
 

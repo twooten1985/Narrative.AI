@@ -35,13 +35,20 @@ export async function transcribeOnServer(opts: {
     }),
   });
 
+  let lastProgress = 10;
   const job = await pollWithBackoff({
     initialDelayMs: 2000,
     maxDelayMs: 15000,
     timeoutMs: TRANSCRIBE_TIMEOUT_MS,
     poll: () => apiFetch(`/api/aai/transcribe-jobs/${started.jobId}`),
     isDone: (value) => value.status === "completed" || value.status === "error",
-    onUpdate: (value) => opts.onProgress?.(value.message || "Transcribing…", Number(value.progress) || 0),
+    onUpdate: (value) => {
+      lastProgress = Number(value.progress) || lastProgress;
+      opts.onProgress?.(value.message || "Transcribing…", lastProgress);
+    },
+    onTransientError: (_error, attempt, maxAttempts) => {
+      opts.onProgress?.(`Reconnecting to the local server (${attempt}/${maxAttempts})…`, lastProgress);
+    },
   });
 
   if (job.status === "error") throw new Error(job.error || "Transcription failed");
@@ -53,13 +60,20 @@ export async function transcribeLocally(opts: {
   onProgress?: (message: string, progress: number) => void;
 }): Promise<{ transcriptId: string }> {
   const started = await apiFetch(`/api/recordings/${opts.recordingId}/transcribe-local`, { method: "POST" });
+  let lastProgress = 10;
   const job = await pollWithBackoff({
     initialDelayMs: 1000,
     maxDelayMs: 8000,
     timeoutMs: TRANSCRIBE_TIMEOUT_MS,
     poll: () => apiFetch(`/api/aai/transcribe-jobs/${started.jobId}`),
     isDone: (value) => value.status === "completed" || value.status === "error",
-    onUpdate: (value) => opts.onProgress?.(value.message || "Transcribing locally…", Number(value.progress) || 0),
+    onUpdate: (value) => {
+      lastProgress = Number(value.progress) || lastProgress;
+      opts.onProgress?.(value.message || "Transcribing locally…", lastProgress);
+    },
+    onTransientError: (_error, attempt, maxAttempts) => {
+      opts.onProgress?.(`Reconnecting to the local server (${attempt}/${maxAttempts})…`, lastProgress);
+    },
   });
   if (job.status === "error") throw new Error(job.error || "Local transcription failed");
   return { transcriptId: job.transcriptId };
@@ -102,6 +116,9 @@ export async function generateReportOnServer(opts: {
     poll: () => apiFetch(`/api/reports/jobs/${started.jobId}`),
     isDone: (value) => value.status === "completed" || value.status === "error",
     onUpdate: (value) => opts.onProgress?.(value.message || "Writing the report…"),
+    onTransientError: (_error, attempt, maxAttempts) => {
+      opts.onProgress?.(`Reconnecting to the local server (${attempt}/${maxAttempts})…`);
+    },
   });
 
   if (job.status === "error") throw new Error(job.error || "Report generation failed");
