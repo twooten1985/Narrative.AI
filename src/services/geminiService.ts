@@ -1,92 +1,21 @@
-import { GoogleGenAI, Type, HarmCategory, HarmBlockThreshold } from "@google/genai";
-import { APOD_PATTERNS, INTERVIEW_PROMPTS } from "../constants";
+import { REPORT_SPECS } from "./reportPrompts";
 
-export async function generateSummary(transcript: string, type: string, apiKey?: string) {
-  const key = apiKey || process.env.GEMINI_API_KEY;
-  if (!key) {
-    throw new Error("Gemini API Key is missing. Please add GEMINI_API_KEY to your environment variables or provide it in Settings.");
-  }
-  
-  const ai = new GoogleGenAI({ apiKey: key });
-  const prompt = INTERVIEW_PROMPTS[type as keyof typeof INTERVIEW_PROMPTS] || INTERVIEW_PROMPTS["Suspect Interview"];
-  
-  const response = await ai.models.generateContent({
-    model: "gemini-3-flash-preview",
-    contents: `
-      System Instruction: You are an expert forensic analyst for law enforcement. Your task is to provide objective, factual summaries of sensitive interview material. Do not censor or omit details based on their graphic or sensitive nature, as they are critical for legal proceedings. Maintain a professional, clinical tone.
-      
-      Task: ${prompt}
-      
-      Transcript:
-      ${transcript}
-      
-      Provide a detailed summary, key entities (names, locations), and sentiment analysis.
-    `,
-    config: {
-      safetySettings: [
-        { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-        { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
-        { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
-        { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-        { category: HarmCategory.HARM_CATEGORY_CIVIC_INTEGRITY, threshold: HarmBlockThreshold.BLOCK_NONE },
-      ]
-    }
-  });
-  
-  if (!response.text) {
-    throw new Error("Gemini failed to generate a summary. The response was empty.");
-  }
-  
-  return response.text;
-}
+export const APOD_PATTERNS = {
+  "Crime Perpetrated by Someone Else": "Suspect indicates abuse occurred but attributes it to another person.",
+  "Denigration of the Victim/Victim Initiation": "Suspect claims victim initiated contact, was promiscuous, had mental health/behavior issues, or otherwise shifts blame to the victim.",
+  "Asexuality": "Suspect describes themselves as uninterested in sex or physically unable to engage.",
+  "Excessive Detail": "Suspect provides unnecessary, overly detailed information about unrelated events or topics.",
+  "Graduated Pseudo-Admission": "Suspect gradually reveals more incriminating details over the course of the interview.",
+  "Hedge Phrasing": "Frequent use of qualifiers like 'pretty much', 'basically', 'technically', 'mostly', 'usually', 'from what I remember', 'basically', or excessive pauses/hesitations.",
+  "Hero/Victim": "Suspect portrays themselves as a hero/helper to the victim/family/community or seeks sympathy by claiming victimhood.",
+  "Claim of Honesty": "Repeated assertions of honesty, such as 'I'm trying to be honest', 'honestly', 'I swear', 'really', 'seriously'.",
+  "Religion": "Excessive mentions of God, faith, or religion as proof of innocence or character.",
+  "Revenge/Out to Get Me": "Suspect claims accusation is motivated by revenge or secondary gain from victim or associates.",
+  "Amnesia": "Frequent claims of memory loss regarding offense-related times/details.",
+  "Legal Technicalities": "Focus on lack of evidence (e.g., no DNA), procedural issues, or corruption in legal process."
+};
 
-export async function runApodAnalysis(transcript: string, apiKey?: string) {
-  const key = apiKey || process.env.GEMINI_API_KEY;
-  if (!key) {
-    throw new Error("Gemini API Key is missing. Please add GEMINI_API_KEY to your environment variables or provide it in Settings.");
-  }
-
-  const ai = new GoogleGenAI({ apiKey: key });
-  const response = await ai.models.generateContent({
-    model: "gemini-3-flash-preview",
-    contents: `
-      System Instruction: You are an expert forensic psychologist for law enforcement. Your task is to provide objective, factual analysis of sensitive interview material. Do not censor or omit details based on their graphic or sensitive nature. Maintain a professional, clinical tone.
-      
-      Task: Conduct a detailed APOD (Analysis of Patterns of Denial) assessment on the following transcript.
-      For each of the 12 patterns, determine if it is present (Yes/No) and provide evidence (quotes/timestamps).
-      
-      Patterns to check:
-      ${JSON.stringify(APOD_PATTERNS, null, 2)}
-      
-      Transcript:
-      ${transcript}
-      
-      Return the result as a JSON array of objects with fields: pattern, engaged (boolean), explanation, and evidence (string).
-    `,
-    config: {
-      responseMimeType: "application/json",
-      safetySettings: [
-        { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-        { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
-        { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
-        { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-        { category: HarmCategory.HARM_CATEGORY_CIVIC_INTEGRITY, threshold: HarmBlockThreshold.BLOCK_NONE },
-      ],
-      responseSchema: {
-        type: Type.ARRAY,
-        items: {
-          type: Type.OBJECT,
-          properties: {
-            pattern: { type: Type.STRING },
-            engaged: { type: Type.BOOLEAN },
-            explanation: { type: Type.STRING },
-            evidence: { type: Type.STRING }
-          },
-          required: ["pattern", "engaged", "explanation", "evidence"]
-        }
-      }
-    }
-  });
-  
-  return JSON.parse(response.text || "[]");
-}
+// Kept for the UI dropdowns (Object.keys(INTERVIEW_PROMPTS)) and the custom-prompt name check.
+export const INTERVIEW_PROMPTS: Record<string, string> = Object.fromEntries(
+  Object.entries(REPORT_SPECS).map(([name, spec]) => [name, spec.focus])
+);

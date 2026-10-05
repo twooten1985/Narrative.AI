@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Narrative AI</title>
+    <style>
+      body { margin: 0; background: #0F1115; color: #fff; font-family: "Segoe UI", sans-serif; display: flex; min-height: 100vh; align-items: center; justify-content: center; }
+      main { max-width: 520px; padding: 32px; }
+      h1 { font-size: 28px; margin: 0 0 12px; }
+      p { color: #c7c7c7; line-height: 1.5; }
+      button { margin-top: 16px; background: #f97316; color: #fff; border: 0; border-radius: 12px; padding: 12px 18px; font-weight: 700; cursor: pointer; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Narrative AI needs to reload</h1>
+      <p id="reason">The window ran out of memory or closed unexpectedly. Your cases are still on this computer.</p>
+      <button id="reload" type="button">Reload</button>
+    </main>
+    <script>
+      const params = new URLSearchParams(location.search);
+      const reason = params.get("reason");
+      if (reason) document.getElementById("reason").textContent = reason;
+      document.getElementById("reload").addEventListener("click", () => {
+        if (window.electron && window.electron.reload) window.electron.reload();
+        else location.reload();
+      });
+    </script>
+  </body>
+</html>
