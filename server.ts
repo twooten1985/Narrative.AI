@@ -17,7 +17,8 @@ import { testAssemblyAiKey, testGeminiKey } from "./src/services/keyTest";
 import { keywordHits } from "./src/services/keywordHits";
 import { runRegression } from "./src/regression/runRegression";
 import { gatewayChat } from "./src/services/gatewayChat";
-import { buildTranscriptRequest, createTranscript, deleteRemoteTranscript, getTranscript, streamUploadAudio } from "./src/services/aaiClient";
+import { buildTranscriptRequest, createTranscript, deleteRemoteTranscript, formatCauseChain, getTranscript, streamUploadAudio } from "./src/services/aaiClient";
+import { assertSpeechUploadTarget, isConvertedSpeechFile, needsSpeechConversion, SPEECH_AUDIO_BITRATE, SPEECH_AUDIO_CHANNELS } from "./src/services/speechAudio";
 import { geminiGenerateContent, apodUserPrompt, GEMINI_MODEL_ID } from "./src/services/geminiRest";
 import { pollWithBackoff } from "./src/services/polling";
 import { DEFAULT_APP_SETTINGS, normalizeAppSettings, type AppSettings } from "./src/services/settings";
@@ -98,27 +99,85 @@ const db = getDatabase(dbPath);
 const uploadDir = path.join(userDataPath, "uploads");
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
 
-const conversionJobs = new Map<string, number>();
+interface ConversionState {
+  progress: number;
+  outputFilename: string;
+  error?: string;
+  /** Resolves to the finished MP3 path. Rejects if ffmpeg fails. */
+  resultPromise: Promise<string>;
+}
 
-const extractAudio = (inputPath: string, outputPath: string, jobId?: string): Promise<void> => {
+const conversionJobs = new Map<string, ConversionState>();
+const conversionByOutput = new Map<string, Promise<void>>();
+
+// 96 kbps mono — see speechAudio.ts. Progress stays under 100 until the caller
+// finishes any database update, so clients do not treat a video as ready.
+const extractAudio = (inputPath: string, outputPath: string, onProgress?: (pct: number) => void): Promise<void> => {
   return new Promise((resolve, reject) => {
-    if (jobId) conversionJobs.set(jobId, 0);
+    onProgress?.(0);
     ffmpeg(inputPath)
+      .noVideo()
+      .audioChannels(SPEECH_AUDIO_CHANNELS)
+      .audioBitrate(SPEECH_AUDIO_BITRATE)
+      .audioCodec("libmp3lame")
       .toFormat("mp3")
       .on("progress", (progress) => {
-        if (jobId && progress.percent) conversionJobs.set(jobId, Math.round(progress.percent));
+        if (progress.percent != null && !Number.isNaN(progress.percent)) {
+          onProgress?.(Math.max(0, Math.min(99, Math.round(progress.percent))));
+        }
       })
-      .on("end", () => {
-        if (jobId) conversionJobs.set(jobId, 100);
-        resolve();
-      })
-      .on("error", (err) => {
-        if (jobId) conversionJobs.delete(jobId);
-        reject(err);
-      })
+      .on("end", () => resolve())
+      .on("error", (err) => reject(err))
       .save(outputPath);
   });
 };
+
+function beginConversion(jobId: string, inputPath: string, outputFilename: string, afterFile?: () => void): Promise<string> {
+  const existing = conversionJobs.get(jobId);
+  if (existing?.resultPromise && !existing.error && existing.progress < 100) return existing.resultPromise;
+  const outputPath = path.join(uploadDir, outputFilename);
+  const state: ConversionState = {
+    progress: 0,
+    outputFilename,
+    resultPromise: Promise.resolve(outputPath),
+  };
+  const resultPromise = extractAudio(inputPath, outputPath, (pct) => {
+    state.progress = pct;
+  }).then(() => {
+    const size = fs.existsSync(outputPath) ? fs.statSync(outputPath).size : 0;
+    if (!size) throw new Error("Converted speech audio is empty.");
+    afterFile?.();
+    state.progress = 100;
+    return outputPath;
+  }).catch((err: any) => {
+    state.error = err?.message || "Audio conversion failed";
+    console.error("[convert] failed:", state.error);
+    throw err;
+  });
+  state.resultPromise = resultPromise;
+  conversionJobs.set(jobId, state);
+  const finished = resultPromise.then(() => undefined);
+  // Mark the side promise handled so a failed conversion does not surface as
+  // an unhandled rejection when nobody is waiting on the output name.
+  finished.catch(() => {});
+  conversionByOutput.set(outputFilename, finished);
+  return resultPromise;
+}
+
+function conversionProgressPayload(id: string): { status: number; body: Record<string, unknown> } {
+  const job = conversionJobs.get(id);
+  if (job?.error) {
+    return { status: 500, body: { error: `Audio conversion failed: ${job.error}`, progress: job.progress, status: "error" } };
+  }
+  if (job) {
+    return { status: 200, body: { progress: job.progress, status: job.progress >= 100 ? "completed" : "processing" } };
+  }
+  const recording = db.prepare("SELECT filename, transcription_filename FROM recordings WHERE id = ?").get(id) as { filename?: string; transcription_filename?: string } | undefined;
+  if (recording && isConvertedSpeechFile(recording.filename || "", recording.transcription_filename)) {
+    return { status: 200, body: { progress: 100, status: "completed" } };
+  }
+  return { status: 404, body: { error: "Job not found" } };
+}
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS cases (
@@ -407,16 +466,61 @@ function geminiFor(): ChatFn {
   };
 }
 
-function audioPathForRequest(body: any): { filePath: string; recordingId: string | null } {
-  if (body.recordingId) {
+async function speechFileForRecording(recording: {
+  id: string;
+  filename: string;
+  transcription_filename?: string | null;
+  mime_type?: string | null;
+  original_name?: string | null;
+}, preferredOutput?: string): Promise<string> {
+  const source = {
+    filename: recording.filename,
+    mimeType: recording.mime_type,
+    originalName: recording.original_name,
+  };
+  const currentName = recording.transcription_filename || recording.filename;
+  if (!needsSpeechConversion(source)) return path.join(uploadDir, currentName);
+  if (isConvertedSpeechFile(recording.filename, recording.transcription_filename)) {
+    const ready = path.join(uploadDir, recording.transcription_filename as string);
+    if (fs.existsSync(ready) && fs.statSync(ready).size > 0) return ready;
+  }
+  const existing = conversionJobs.get(recording.id);
+  if (existing?.resultPromise && !existing.error && existing.progress < 100) {
+    console.log(`[aai] waiting for speech conversion of ${recording.filename}`);
+    return existing.resultPromise;
+  }
+  const outputFilename = preferredOutput || `${uuidv4()}.mp3`;
+  const inputPath = path.join(uploadDir, recording.filename);
+  return beginConversion(recording.id, inputPath, outputFilename, () => {
+    db.prepare("UPDATE recordings SET transcription_filename = ? WHERE id = ?").run(outputFilename, recording.id);
+  });
+}
+
+async function resolveAudioForTranscription(body: any): Promise<{ filePath: string; recordingId: string | null }> {
+  if (body?.recordingId) {
     const recording = db.prepare("SELECT * FROM recordings WHERE id = ?").get(body.recordingId) as any;
     if (!recording) throw new Error("Recording not found");
-    const filename = recording.transcription_filename || recording.filename;
-    return { filePath: path.join(uploadDir, filename), recordingId: recording.id };
+    const filePath = await speechFileForRecording(recording);
+    if (!fs.existsSync(filePath) || !fs.statSync(filePath).size) throw new Error("Audio file not found for transcription.");
+    assertSpeechUploadTarget({
+      filename: recording.filename,
+      mimeType: recording.mime_type,
+      originalName: recording.original_name,
+    }, path.basename(filePath));
+    return { filePath, recordingId: recording.id };
   }
-  const filename = safeBasename(body.filename);
+  const filename = safeBasename(body?.filename);
   if (!filename) throw new Error("A recording id or file name is required.");
-  return { filePath: path.join(uploadDir, filename), recordingId: null };
+  const pending = conversionByOutput.get(filename);
+  if (pending) await pending;
+  let filePath = path.join(uploadDir, filename);
+  if (needsSpeechConversion({ filename })) {
+    const outputFilename = `${uuidv4()}.mp3`;
+    filePath = await beginConversion(`file:${filename}`, filePath, outputFilename);
+  }
+  if (!fs.existsSync(filePath) || !fs.statSync(filePath).size) throw new Error("Audio file not found for transcription.");
+  assertSpeechUploadTarget({ filename }, path.basename(filePath));
+  return { filePath, recordingId: null };
 }
 
 export function createApp() {
@@ -612,17 +716,18 @@ export function createApp() {
 
     if (isVideo || isWav) {
       const audioFilename = `${uuidv4()}.mp3`;
-      const audioPath = path.join(uploadDir, audioFilename);
-      extractAudio(filePath, audioPath, id)
-        .then(() => {
-          db.prepare("UPDATE recordings SET transcription_filename = ? WHERE id = ?").run(audioFilename, id);
-        })
-        .catch((err) => console.error("Background conversion failed:", err));
       db.prepare(`
         INSERT INTO recordings (id, case_id, filename, transcription_filename, original_name, mime_type, size)
         VALUES (?, ?, ?, ?, ?, ?, ?)
       `).run(id, caseId, filename, filename, originalname, mimetype, size);
-      return res.json({ id, filename, transcriptionFilename: filename, originalname, mimetype, size, status: "converting" });
+      speechFileForRecording({
+        id,
+        filename,
+        transcription_filename: filename,
+        mime_type: mimetype,
+        original_name: originalname,
+      }, audioFilename).catch((err) => console.error("Background conversion failed:", err));
+      return res.json({ id, filename, transcriptionFilename: audioFilename, originalname, mimetype, size, status: "converting" });
     }
 
     db.prepare(`
@@ -636,28 +741,19 @@ export function createApp() {
     const { id } = req.params;
     const recording = db.prepare("SELECT * FROM recordings WHERE id = ?").get(id) as any;
     if (!recording) return res.status(404).json({ error: "Recording not found" });
-    const inputPath = path.join(uploadDir, recording.filename);
-    const audioFilename = `${uuidv4()}.mp3`;
-    const audioPath = path.join(uploadDir, audioFilename);
-    extractAudio(inputPath, audioPath, id)
-      .then(() => {
+    const existing = conversionJobs.get(id);
+    if (!(existing?.resultPromise && !existing.error && existing.progress < 100)) {
+      const audioFilename = `${uuidv4()}.mp3`;
+      beginConversion(id, path.join(uploadDir, recording.filename), audioFilename, () => {
         db.prepare("UPDATE recordings SET transcription_filename = ? WHERE id = ?").run(audioFilename, id);
-      })
-      .catch((err) => console.error("On-demand conversion failed:", err));
+      }).catch((err) => console.error("On-demand conversion failed:", err));
+    }
     res.json({ success: true, jobId: id });
   });
 
   app.get("/api/recordings/:id/convert/progress", (req, res) => {
-    const { id } = req.params;
-    const progress = conversionJobs.get(id);
-    if (progress === undefined) {
-      const recording = db.prepare("SELECT * FROM recordings WHERE id = ?").get(id) as any;
-      if (recording && recording.transcription_filename !== recording.filename) {
-        return res.json({ progress: 100, status: "completed" });
-      }
-      return res.status(404).json({ error: "Job not found" });
-    }
-    res.json({ progress, status: progress === 100 ? "completed" : "processing" });
+    const payload = conversionProgressPayload(req.params.id);
+    res.status(payload.status).json(payload.body);
   });
 
   app.post("/api/upload", upload.single("file"), async (req: any, res) => {
@@ -667,18 +763,16 @@ export function createApp() {
     const isWav = mimetype === "audio/wav" || mimetype === "audio/x-wav" || originalname.toLowerCase().endsWith(".wav");
     if (isVideo || isWav) {
       const audioFilename = `${uuidv4()}.mp3`;
-      const audioPath = path.join(uploadDir, audioFilename);
       const jobId = uuidv4();
-      extractAudio(filePath, audioPath, jobId).catch((err) => console.error("Background upload conversion failed:", err));
+      beginConversion(jobId, filePath, audioFilename).catch((err) => console.error("Background upload conversion failed:", err));
       return res.json({ filename, transcriptionFilename: audioFilename, originalname, mimetype, size, status: "converting", jobId });
     }
     res.json({ filename, transcriptionFilename: filename, originalname, mimetype, size, status: "ready" });
   });
 
   app.get("/api/jobs/:id/progress", (req, res) => {
-    const progress = conversionJobs.get(req.params.id);
-    if (progress === undefined) return res.status(404).json({ error: "Job not found" });
-    res.json({ progress, status: progress === 100 ? "completed" : "processing" });
+    const payload = conversionProgressPayload(req.params.id);
+    res.status(payload.status).json(payload.body);
   });
 
   app.get("/api/recordings/:id", (req, res) => {
@@ -781,14 +875,26 @@ export function createApp() {
 
     (async () => {
       const settings = getSettings();
-      const { filePath, recordingId } = audioPathForRequest(req.body || {});
-      if (!fs.existsSync(filePath)) throw new Error("Audio file not found for transcription.");
+      job.message = "Preparing speech audio…";
+      job.progress = 8;
+      const { filePath, recordingId } = await resolveAudioForTranscription(req.body || {});
       job.message = "Uploading audio to AssemblyAI…";
       job.progress = 15;
       const uploadUrl = await streamUploadAudio({
         filePath,
         apiKey: secrets.assemblyai,
         apiBase: resolveApiBase(settings),
+        onProgress: ({ loaded, total, attempt, attempts }) => {
+          const ratio = total > 0 ? Math.min(1, loaded / total) : 0;
+          const pct = Math.round(ratio * 100);
+          job.progress = 15 + Math.round(ratio * 20);
+          const retryNote = attempt > 1 ? ` (attempt ${attempt}/${attempts})` : "";
+          job.message = `Uploading audio to AssemblyAI… ${pct}%${retryNote}`;
+        },
+        onRetry: ({ nextAttempt, attempts, reason }) => {
+          job.message = `Upload failed (${reason}). Retrying ${nextAttempt}/${attempts}…`;
+          console.error(`[aai] ${job.message}`);
+        },
       });
       job.message = "Starting transcription…";
       job.progress = 35;
@@ -832,10 +938,16 @@ export function createApp() {
       job.message = "Transcription saved locally";
       job.transcriptId = transcript.id || started.id;
     })().catch((error: any) => {
-      console.error("[aai] transcription job failed:", error?.message || error);
+      const message = error?.message || "Transcription failed";
+      const diagnostic = formatCauseChain(error);
+      const stored = diagnostic ? `${message} [${diagnostic}]` : message;
+      console.error("[aai] transcription job failed:", stored);
+      if (error?.cause) {
+        console.error("[aai] cause:", error.cause?.code || error.cause?.name || "", error.cause?.message || error.cause);
+      }
       job.status = "error";
-      job.error = error?.message || "Transcription failed";
-      job.message = job.error;
+      job.error = stored;
+      job.message = message;
     });
   });
 
@@ -1113,11 +1225,11 @@ export function createApp() {
 
   app.post("/api/recordings/:id/transcribe-local", (req, res) => {
     const { id } = req.params;
-    const recording = db.prepare("SELECT id, filename, transcription_filename FROM recordings WHERE id = ?").get(id) as any;
+    const recording = db.prepare("SELECT * FROM recordings WHERE id = ?").get(id) as any;
     if (!recording) return res.status(404).json({ error: "Recording not found" });
-    const audioFilename = recording.transcription_filename || recording.filename;
-    const audioPath = path.join(uploadDir, audioFilename);
-    if (!fs.existsSync(audioPath)) return res.status(404).json({ error: "Audio file not found for transcription." });
+    if (!fs.existsSync(path.join(uploadDir, recording.filename))) {
+      return res.status(404).json({ error: "Audio file not found for transcription." });
+    }
 
     const jobId = uuidv4();
     const job: Job = { status: "running", progress: 1, message: "Preparing local transcription…" };
@@ -1127,6 +1239,8 @@ export function createApp() {
     (async () => {
       const tempDir = path.join(uploadDir, `whisper-${jobId}`);
       try {
+        job.message = "Preparing speech audio…";
+        const audioPath = await speechFileForRecording(recording);
         const durationMs = await probeDurationMs(audioPath);
         if (!durationMs) throw new Error("Could not read the recording length.");
         const plans = planWhisperSegments(durationMs);
@@ -1199,14 +1313,18 @@ export function createApp() {
         VALUES (?, ?, ?, ?, ?, ?, ?)
       `).run(id, caseId, filename, filename, originalname, mimetype, size);
       if (isVideo || isWav) {
-        extractAudio(filePath, path.join(uploadDir, transcriptionFilename), id)
-          .then(() => db.prepare("UPDATE recordings SET transcription_filename = ? WHERE id = ?").run(transcriptionFilename, id))
-          .catch((err) => console.error("Import conversion failed:", err));
+        speechFileForRecording({
+          id,
+          filename,
+          transcription_filename: filename,
+          mime_type: mimetype,
+          original_name: originalname,
+        }, transcriptionFilename).catch((err) => console.error("Import conversion failed:", err));
       }
-      return res.json({ id, filename, transcriptionFilename: filename, originalname, mimetype, size, status });
+      return res.json({ id, filename, transcriptionFilename, originalname, mimetype, size, status });
     }
     if ((isVideo || isWav) && jobId) {
-      extractAudio(filePath, path.join(uploadDir, transcriptionFilename), jobId).catch((err) => console.error("Import conversion failed:", err));
+      beginConversion(jobId, filePath, transcriptionFilename).catch((err) => console.error("Import conversion failed:", err));
     }
     return res.json({ filename, transcriptionFilename, originalname, mimetype, size, status, jobId });
   }

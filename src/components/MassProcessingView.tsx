@@ -45,6 +45,8 @@ interface ProcessedFile {
   status: 'pending' | 'uploading' | 'converting' | 'transcribing' | 'summarizing' | 'completed' | 'error';
   progress: number;
   message?: string;
+  serverFilename?: string;
+  serverReady?: boolean;
   error?: string;
   summary?: string;
   reportMeta?: AuditFields | null;
@@ -120,7 +122,14 @@ export const MassProcessingView: React.FC<MassProcessingViewProps> = ({
     patchFile(fileObj.id, { status: 'uploading', progress: 8, error: undefined, message: 'Uploading to this computer…' });
 
     let uploadData: any;
-    if (fileObj.path) {
+    if (fileObj.serverReady && fileObj.serverFilename) {
+      uploadData = {
+        filename: fileObj.serverFilename,
+        transcriptionFilename: fileObj.serverFilename,
+        status: 'ready',
+      };
+      patchFile(fileObj.id, { status: 'transcribing', progress: 30, message: 'Retrying upload to AssemblyAI…' });
+    } else if (fileObj.path) {
       const allowed = await getElectron()?.allowPath?.(fileObj.path);
       if (!allowed?.ok) throw new Error(allowed?.error || 'Could not use that file path.');
       uploadData = await apiFetch('/api/upload/import', {
@@ -135,7 +144,6 @@ export const MassProcessingView: React.FC<MassProcessingViewProps> = ({
     } else {
       throw new Error('That file is no longer available.');
     }
-    fileObj.file = undefined;
 
     if (uploadData.status === 'converting') {
       patchFile(fileObj.id, { status: 'converting', progress: 15, message: 'Converting audio…' });
@@ -149,7 +157,18 @@ export const MassProcessingView: React.FC<MassProcessingViewProps> = ({
           const progressValue = Number(value.progress) || 0;
           patchFile(fileObj.id, { progress: 15 + progressValue * 0.15, message: 'Converting audio…' });
         },
+        onTransientError: (_error, attempt, maxAttempts) => {
+          patchFile(fileObj.id, { message: `Reconnecting to the local server (${attempt}/${maxAttempts})…` });
+        },
       });
+    }
+
+    const storedName = uploadData.transcriptionFilename || uploadData.filename;
+    if (storedName) {
+      fileObj.serverFilename = storedName;
+      fileObj.serverReady = true;
+      fileObj.file = undefined;
+      patchFile(fileObj.id, { serverFilename: storedName, serverReady: true, file: undefined });
     }
 
     const shouldTranscribe = mode === 'mass-jail-call' ? jailCallTranscribe : keywordTranscribe;
@@ -282,7 +301,7 @@ export const MassProcessingView: React.FC<MassProcessingViewProps> = ({
           : '';
         patchFile(fileObj.id, { status: 'error', progress: 100, error: `${message}${geminiHint}`, message: 'Failed' });
       } finally {
-        fileObj.file = undefined;
+        if (fileObj.serverReady) fileObj.file = undefined;
       }
     });
     setIsProcessing(false);
@@ -475,7 +494,7 @@ export const MassProcessingView: React.FC<MassProcessingViewProps> = ({
                             onClick={() => processFiles(file.id, 'gateway')}
                             className="px-3 py-1.5 rounded-lg bg-white text-black text-xs font-bold inline-flex items-center gap-1"
                           >
-                            <RotateCcw size={12} /> Retry
+                            <RotateCcw size={12} /> Retry upload
                           </button>
                           {allowGemini && !preferAssemblySummary && hasGeminiKey && (
                             <button
