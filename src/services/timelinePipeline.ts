@@ -1,3 +1,4 @@
+import { savedSpeakerName } from "./speakerNames";
 import { estimateTokens } from "./transcriptChunks";
 import {
   buildTimelineMergeMessages,
@@ -39,8 +40,7 @@ export function transcriptPreview(transcript: any, speakerLabels?: Record<string
   for (const utterance of utterances) {
     if (out.length >= maxChars) break;
     const speaker = utterance?.speaker ?? "?";
-    const name = speakerLabels?.[speaker];
-    const label = name ? `${name} (Speaker ${speaker})` : `Speaker ${speaker}`;
+    const label = savedSpeakerName(speakerLabels, String(speaker)) || `Speaker ${speaker}`;
     const line = `[${hhmmss(utterance?.start)}] ${label}: ${String(utterance?.text || "")}`;
     out += (out ? "\n" : "") + line.slice(0, maxChars);
   }

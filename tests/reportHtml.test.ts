@@ -33,6 +33,16 @@ describe("report html", () => {
     assert.match(page, /Case &lt;img/);
     assert.match(page, /rec &quot;quoted&quot; &amp; file/);
     assert.match(page, /AI-assisted summary/);
+    const withAck = buildPrintableReportHtml({
+      caseName: "Case",
+      recordingName: "room.mp3",
+      interviewType: "Suspect Interview",
+      reportDate: "2026-10-05",
+      markdown: "## Final Summary\nOverview.",
+      auditLine: "Model: claude-sonnet-4-6",
+      acknowledgement: "AI use acknowledged by user on Oct 5, 2026 7:09 PM CDT.",
+    });
+    assert.match(withAck, /AI use acknowledged by user on Oct 5, 2026 7:09 PM CDT/);
     assert.match(page, /#4412/);
     assert.equal(escapeHtml(`<>&"'`), "&lt;&gt;&amp;&quot;&#39;");
   });

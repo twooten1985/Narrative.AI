@@ -55,6 +55,9 @@ export function ReportAuditFooter({ meta }: { meta?: AuditFields | null }) {
   return (
     <div className="report-footer">
       <p className="font-semibold">{AI_DISCLAIMER}</p>
+      {meta?.aiAcknowledgedLabel?.trim() && (
+        <p className="mt-1" data-testid="ai-ack-footer">{meta.aiAcknowledgedLabel}</p>
+      )}
       <p className="mt-1 font-mono text-[11px] opacity-80">{formatAuditLine(meta || {})}</p>
     </div>
   );

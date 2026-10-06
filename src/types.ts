@@ -15,6 +15,9 @@ export interface ReportMeta {
   transcriptId: string | null;
   generatedAt: string | null;
   truncated?: boolean;
+  /** Set when the report is generated. Later exports keep this time. */
+  aiAcknowledgedAt?: string | null;
+  aiAcknowledgedLabel?: string | null;
 }
 
 export interface Recording {
