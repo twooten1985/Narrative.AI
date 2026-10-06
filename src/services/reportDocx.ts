@@ -12,6 +12,7 @@ import {
   TextRun,
 } from "docx";
 import { AI_DISCLAIMER } from "./audit";
+import { speakerDisplayName } from "./speakerNames";
 import { parseInlineSpans, parseMarkdownBlocks, type MarkdownBlock } from "./markdownBlocks";
 
 export interface DocxUtterance {
@@ -28,6 +29,7 @@ export interface DocxReportInput {
   officerBadge?: string;
   reportDate: string;
   auditLine: string;
+  acknowledgement?: string | null;
   utterances?: DocxUtterance[];
   speakerLabels?: Record<string, string>;
 }
@@ -99,7 +101,7 @@ export function buildReportDocument(input: DocxReportInput): Document {
       text: "Transcript",
     }));
     for (const utterance of input.utterances) {
-      const who = input.speakerLabels?.[utterance.speaker] || `Speaker ${utterance.speaker}`;
+      const who = speakerDisplayName(utterance.speaker, input.speakerLabels);
       transcriptParagraphs.push(new Paragraph({
         children: [new TextRun({ text: `${who} (${formatClock(utterance.startMs)}):`, bold: true })],
       }));
@@ -164,6 +166,11 @@ export function buildReportDocument(input: DocxReportInput): Document {
                 border: { top: thinBorder },
                 children: [new TextRun({ text: AI_DISCLAIMER, italics: true, size: 16 })],
               }),
+              ...(input.acknowledgement?.trim()
+                ? [new Paragraph({
+                    children: [new TextRun({ text: input.acknowledgement.trim(), size: 14, color: "444444" })],
+                  })]
+                : []),
               new Paragraph({
                 children: [new TextRun({ text: input.auditLine, size: 14, color: "444444" })],
               }),
@@ -195,6 +202,11 @@ export function buildReportDocument(input: DocxReportInput): Document {
           new Paragraph({
             children: [new TextRun({ text: AI_DISCLAIMER, italics: true })],
           }),
+          ...(input.acknowledgement?.trim()
+            ? [new Paragraph({
+                children: [new TextRun({ text: input.acknowledgement.trim(), italics: true, size: 18 })],
+              })]
+            : []),
           new Paragraph({
             children: [new TextRun({ text: input.auditLine, size: 18, color: "444444" })],
           }),

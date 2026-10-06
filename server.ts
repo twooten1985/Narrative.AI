@@ -7,7 +7,9 @@ import { v4 as uuidv4 } from "uuid";
 import fs from "fs";
 import ffmpeg from "fluent-ffmpeg";
 import { fileURLToPath } from "url";
+import { formatAiAcknowledgement } from "./src/services/audit";
 import { formatTranscriptForLLM } from "./src/services/reportPrompts";
+import { listSpeakers, suggestSpeakerNames } from "./src/services/speakerNames";
 import { sanitizeReport } from "./src/services/sanitizeReport";
 import { cleanStoredText } from "./src/services/cleanReports";
 import { generateInvestigativeReport, withTruncationWarning, type ChatFn } from "./src/services/reportPipeline";
@@ -276,6 +278,15 @@ const storage = multer.diskStorage({
 
 // Audio is streamed to disk by multer. JSON bodies are transcripts and settings, not media.
 const upload = multer({ storage });
+
+function acknowledgementIso(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/.test(trimmed)) return null;
+  const parsed = new Date(trimmed);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed.toISOString();
+}
 
 function parseJsonField(value: any) {
   if (!value) return null;
@@ -803,6 +814,15 @@ export function createApp() {
     res.json({ total: all.length, offset, utterances, transcriptId: transcript?.id || null });
   });
 
+  app.get("/api/recordings/:id/speakers", (req, res) => {
+    const transcript = readStoredTranscript(req.params.id);
+    if (!transcript) return res.status(404).json({ error: "Transcript not found" });
+    res.json({
+      speakers: listSpeakers(transcript),
+      suggestions: suggestSpeakerNames(transcript),
+    });
+  });
+
   app.get("/api/recordings/:id/transcript-search", (req, res) => {
     const query = String(req.query.q || "").trim().slice(0, 200).toLowerCase();
     if (!query) return res.json({ count: 0 });
@@ -1026,6 +1046,7 @@ export function createApp() {
         },
       });
       const generatedAt = new Date().toISOString();
+      const acknowledgedAt = acknowledgementIso(req.body?.aiAcknowledgedAt);
       const meta = {
         engine: generated.engine,
         model: generated.model,
@@ -1034,6 +1055,8 @@ export function createApp() {
         generatedAt,
         truncated: generated.truncated,
         partCount: generated.partCount,
+        aiAcknowledgedAt: acknowledgedAt,
+        aiAcknowledgedLabel: acknowledgedAt ? formatAiAcknowledgement(acknowledgedAt) : null,
       };
       if (req.body.recordingId) {
         db.prepare("UPDATE recordings SET summary = ?, interview_type = ?, report_meta = ? WHERE id = ?")
@@ -1051,6 +1074,8 @@ export function createApp() {
         engine: generated.engine,
         generatedAt,
         partCount: generated.partCount,
+        aiAcknowledgedAt: meta.aiAcknowledgedAt,
+        aiAcknowledgedLabel: meta.aiAcknowledgedLabel,
         saved: Boolean(req.body.recordingId),
       };
     })().catch((error: any) => {

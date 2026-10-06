@@ -1,7 +1,7 @@
 {
   "name": "react-example",
   "private": true,
-  "version": "6.1.4",
+  "version": "6.1.5",
   "description": "A professional transcription and forensic analysis tool for law enforcement, featuring AssemblyAI integration, speaker labeling, and APOD (Analysis of Patterns of Denial) reporting.",
   "author": "Narrative.AI Team",
   "type": "module",
@@ -73,7 +73,7 @@
   "build": {
     "appId": "com.narrativeai.app",
     "productName": "Narrative AI",
-    "buildVersion": "6.1.4",
+    "buildVersion": "6.1.5",
     "directories": {
       "output": "dist-electron"
     },

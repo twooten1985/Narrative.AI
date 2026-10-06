@@ -12,6 +12,7 @@ import {
 } from "./reportCompletion";
 import { chunkTranscript, type TranscriptChunk } from "./transcriptChunks";
 import type { CaseInfo } from "./reportPrompts";
+import { listSpeakers, suggestSpeakerNames, type SpeakerSuggestion } from "./speakerNames";
 
 export type { ChatFn, ChatMessage, ChatResult };
 export { isTruncatedFinish };
@@ -23,6 +24,8 @@ export interface GenerateReportOptions {
   reportType: string;
   transcript: { text?: string | null; utterances?: any[] | null; id?: string | null };
   speakerLabels?: Record<string, string> | null;
+  /** Optional override. When omitted, names are taken from quotes in the transcript. */
+  speakerSuggestions?: SpeakerSuggestion[];
   caseInfo?: CaseInfo;
   customInstructions?: string;
   model: string;
@@ -68,6 +71,13 @@ async function completePart(chat: ChatFn, model: string, messages: Parameters<ty
 
 export async function generateInvestigativeReport(opts: GenerateReportOptions & { engine?: GeneratedReport["engine"] }): Promise<GeneratedReport> {
   const engine = opts.engine || "assemblyai-gateway";
+  const speakers = listSpeakers(opts.transcript);
+  const speakerSuggestions = opts.speakerSuggestions ?? suggestSpeakerNames(opts.transcript);
+  const speakerContext = {
+    speakerLabels: opts.speakerLabels,
+    speakerSuggestions,
+    speakers,
+  };
   const chunks = chunkTranscript(opts.transcript, opts.speakerLabels, { tokenLimit: opts.tokenLimit });
   if (chunks.length === 0) {
     throw new Error("Transcript text not found.");
@@ -85,6 +95,7 @@ export async function generateInvestigativeReport(opts: GenerateReportOptions & 
           transcriptBlock: chunk.text,
           caseInfo: opts.caseInfo,
           customInstructions: opts.customInstructions,
+          ...speakerContext,
         })
       : buildChunkMessages({
           reportType: opts.reportType,
@@ -94,6 +105,7 @@ export async function generateInvestigativeReport(opts: GenerateReportOptions & 
           partIndex,
           partCount,
           rangeLabel: chunk.rangeLabel,
+          ...speakerContext,
         });
     return completePart(opts.chat, opts.model, built);
   };
@@ -181,6 +193,7 @@ export async function generateInvestigativeReport(opts: GenerateReportOptions & 
       partials: items,
       caseInfo: opts.caseInfo,
       customInstructions: opts.customInstructions,
+      ...speakerContext,
     });
     const once = await completePart(opts.chat, opts.model, built);
     if (once.truncated && items.length > 2 && depth < 12) {

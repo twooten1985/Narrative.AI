@@ -13,6 +13,8 @@ export interface ReportJobResult {
   truncated: boolean;
   engine: string;
   generatedAt: string;
+  aiAcknowledgedAt?: string | null;
+  aiAcknowledgedLabel?: string | null;
 }
 
 export async function transcribeOnServer(opts: {
@@ -90,6 +92,7 @@ export async function generateReportOnServer(opts: {
   model?: string;
   engine?: "gateway" | "gemini";
   strictlyAssembly?: boolean;
+  aiAcknowledgedAt?: string | null;
   onProgress?: (message: string) => void;
 }): Promise<ReportJobResult> {
   const started = await apiFetch("/api/reports/jobs", {
@@ -106,6 +109,7 @@ export async function generateReportOnServer(opts: {
       model: opts.model,
       engine: opts.engine || "gateway",
       strictlyAssembly: opts.strictlyAssembly === true,
+      aiAcknowledgedAt: opts.aiAcknowledgedAt || undefined,
     }),
   });
 

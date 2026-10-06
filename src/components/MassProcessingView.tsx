@@ -19,7 +19,7 @@ import { pollWithBackoff } from '../services/polling';
 import { mapPool } from '../services/concurrency';
 import { getElectron } from '../electron-bridge';
 import { ReportBody } from './ReportBody';
-import { formatAuditLine, type AuditFields } from '../services/audit';
+import { formatReportFooter, type AuditFields } from '../services/audit';
 
 interface MassProcessingViewProps {
   mode: 'mass-jail-call' | 'mass-keyword-search';
@@ -35,6 +35,7 @@ interface MassProcessingViewProps {
   keywordBoost?: boolean;
   keywordTranscribe?: boolean;
   keywordContext?: boolean;
+  aiAcknowledgedAt?: string | null;
 }
 
 interface ProcessedFile {
@@ -75,6 +76,7 @@ export const MassProcessingView: React.FC<MassProcessingViewProps> = ({
   keywordBoost = true,
   keywordTranscribe = true,
   keywordContext = true,
+  aiAcknowledgedAt,
 }) => {
   const [files, setFiles] = useState<ProcessedFile[]>([]);
   const [keywords, setKeywords] = useState('');
@@ -207,6 +209,7 @@ export const MassProcessingView: React.FC<MassProcessingViewProps> = ({
           model: gatewayModel,
           engine,
           strictlyAssembly: preferAssemblySummary,
+          aiAcknowledgedAt,
           onProgress: (message) => patchFile(fileObj.id, { status: 'summarizing', message }),
         });
         const meta: AuditFields = {
@@ -214,6 +217,8 @@ export const MassProcessingView: React.FC<MassProcessingViewProps> = ({
           requestId: result.requestId,
           transcriptId: result.transcriptId || transcriptData?.id || null,
           generatedAt: result.generatedAt,
+          aiAcknowledgedAt: result.aiAcknowledgedAt,
+          aiAcknowledgedLabel: result.aiAcknowledgedLabel,
         };
         let deletionNote = '';
         if (transcriptData?.id && !String(transcriptData.id).startsWith('local-whisper')) {
@@ -312,7 +317,7 @@ export const MassProcessingView: React.FC<MassProcessingViewProps> = ({
       let res = `File: ${f.name}\nStatus: ${f.status}\n`;
       if (f.error) res += `Error: ${f.error}\n`;
       if (f.summary) res += `Summary:\n${f.summary}\n`;
-      if (f.reportMeta) res += `${formatAuditLine(f.reportMeta)}\n`;
+      if (f.reportMeta) res += `${formatReportFooter(f.reportMeta)}\n`;
       if (f.keywordResults) {
         f.keywordResults.forEach(kr => {
           res += `Keyword: ${kr.keyword}\nContext: ${kr.context}\nTimestamp: ${kr.start}\nConfidence: ${kr.confidence}\n\n`;

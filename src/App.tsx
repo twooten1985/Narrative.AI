@@ -42,12 +42,15 @@ import { MassProcessingView } from './components/MassProcessingView';
 import { StatsView } from './components/StatsView';
 import { ReportBody } from './components/ReportBody';
 import { TranscriptList } from './components/TranscriptList';
+import { AiAcknowledgementModal, type SessionAcknowledgement } from './components/AiAcknowledgementModal';
+import { SpeakerNamePanel } from './components/SpeakerNamePanel';
 import { apiFetch, initApiSession } from './services/apiClient';
 import { deleteRemoteTranscript, generateReportOnServer, transcribeLocally, transcribeOnServer } from './services/reportClient';
 import { pollWithBackoff } from './services/polling';
 import { buildPrintableReportHtml } from './services/reportHtml';
 import { reportToDocxBlob } from './services/reportDocx';
 import { AI_DISCLAIMER, formatAuditLine, formatGeneratedAt } from './services/audit';
+import { extractFinalSummary, finalSummaryClipboard, markdownToPlain } from './services/finalSummary';
 import { getElectron } from './electron-bridge';
 import { APP_VERSION } from './version';
 import { DEFAULT_AAI_API_BASE, DEFAULT_LLM_GATEWAY_URL } from './services/config';
@@ -200,6 +203,8 @@ function AppContent() {
   const [searchQuery, setSearchQuery] = useState('');
   const [isRegeneratingSummary, setIsRegeneratingSummary] = useState(false);
   const [copySuccess, setCopySuccess] = useState(false);
+  const [finalCopySuccess, setFinalCopySuccess] = useState(false);
+  const [aiAck, setAiAck] = useState<SessionAcknowledgement | null>(null);
   const [summaryFilter, setSummaryFilter] = useState('');
   const [isSummaryExpanded, setIsSummaryExpanded] = useState(false);
 
@@ -243,28 +248,40 @@ function AppContent() {
   const mediaRef = useRef<HTMLMediaElement>(null);
 
   const copyToClipboard = async (text: string) => {
-    try {
-      if ((window as any).electron && (window as any).electron.writeClipboardText) {
-        const success = (window as any).electron.writeClipboardText(text);
-        if (success !== false) return true;
+    const electron = (window as any).electron;
+    if (electron?.writeClipboardText) {
+      try {
+        if (electron.writeClipboardText(text) !== false) return true;
+      } catch (err) {
+        console.error("Clipboard copy failed:", err);
       }
-      await navigator.clipboard.writeText(text);
+    }
+    if (!navigator.clipboard?.writeText) return false;
+    try {
+      await Promise.race([
+        navigator.clipboard.writeText(text),
+        new Promise((_, reject) => setTimeout(() => reject(new Error("clipboard timeout")), 800)),
+      ]);
       return true;
     } catch (err) {
       console.error("Clipboard copy failed:", err);
-      // Fallback: create temporary textarea to copy text
-      try {
-        const textarea = document.createElement('textarea');
-        textarea.value = text;
-        document.body.appendChild(textarea);
-        textarea.select();
-        document.execCommand('copy');
-        document.body.removeChild(textarea);
-        return true;
-      } catch (fallbackErr) {
-        console.error("Fallback copy failed:", fallbackErr);
-        return false;
-      }
+      return false;
+    }
+  };
+
+  const handleCopyFinalSummary = async () => {
+    if (!selectedRecording?.summary) return;
+    const plain = finalSummaryClipboard(selectedRecording.summary, selectedRecording.report_meta?.aiAcknowledgedLabel);
+    if (!plain) {
+      alert('This report has no Final Summary yet. Regenerate the narrative to add one.');
+      return;
+    }
+    const success = await copyToClipboard(plain);
+    if (success) {
+      setFinalCopySuccess(true);
+      window.setTimeout(() => setFinalCopySuccess(false), 2000);
+    } else {
+      alert('Failed to copy the Final Summary.');
     }
   };
 
@@ -297,6 +314,7 @@ function AppContent() {
     officerBadge,
     markdown: summary,
     auditLine: currentAudit(meta),
+    acknowledgement: meta?.aiAcknowledgedLabel,
   });
 
   const handlePrintReport = () => {
@@ -327,7 +345,7 @@ function AppContent() {
     const result = await electron.exportPdf({
       html: printableHtml(selectedRecording.summary, meta),
       defaultFilename: `${selectedCase?.name || 'case'}_${selectedRecording.original_name}.pdf`,
-      footerNote: AI_DISCLAIMER,
+      footerNote: [AI_DISCLAIMER, meta?.aiAcknowledgedLabel].filter(Boolean).join(' '),
       auditLine: currentAudit(meta),
       headerText,
     });
@@ -854,12 +872,13 @@ function AppContent() {
     return {
       reportType: type,
       customInstructions: isBuiltIn ? undefined : customPrompts[type],
-      speakerLabels: rec.speaker_labels || speakerLabels,
+      speakerLabels,
       caseInfo: {
         caseName: selectedCase?.name,
         recordingName: rec.original_name,
         recordingDate: rec.created_at ? format(parseSqliteDate(rec.created_at), 'yyyy-MM-dd') : undefined,
         reportType: type,
+        reportingOfficer: officerName || undefined,
       },
     };
   };
@@ -875,6 +894,7 @@ function AppContent() {
       caseInfo: reportReq.caseInfo,
       model: gatewayModel,
       engine,
+      aiAcknowledgedAt: aiAck?.iso,
       strictlyAssembly: preferAssemblySummary,
       onProgress: (message) => setProcessingStatus(message),
     });
@@ -902,6 +922,8 @@ function AppContent() {
       transcriptId: result.transcriptId,
       generatedAt: result.generatedAt,
       truncated: result.truncated,
+      aiAcknowledgedAt: result.aiAcknowledgedAt || aiAck?.iso || null,
+      aiAcknowledgedLabel: result.aiAcknowledgedLabel || null,
     };
     await apiFetch(`/api/recordings/${rec.id}`, {
       method: 'PATCH',
@@ -1014,6 +1036,7 @@ function AppContent() {
       officerBadge,
       reportDate,
       auditLine: currentAudit(meta),
+      acknowledgement: meta?.aiAcknowledgedLabel,
       speakerLabels,
       utterances: utteranceLines,
     });
@@ -1028,13 +1051,16 @@ function AppContent() {
     }
   };
 
-  const saveSpeakerLabels = async () => {
+  const saveSpeakerLabels = async (next?: Record<string, string>) => {
     if (!selectedRecording) return;
+    const labels = next || speakerLabels;
+    setSpeakerLabels(labels);
+    setSelectedRecording({ ...selectedRecording, speaker_labels: labels });
     try {
       await safeFetch(`/api/recordings/${selectedRecording.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ speaker_labels: speakerLabels }),
+        body: JSON.stringify({ speaker_labels: labels }),
       });
     } catch (error) {
       console.error("Failed to save speaker labels:", error);
@@ -1091,12 +1117,14 @@ function AppContent() {
       <div className="min-h-screen bg-[#0F1115] text-white flex items-center justify-center gap-3">
         <Loader2 className="animate-spin text-orange-500" />
         <span className="text-sm text-white/60">Opening the case library…</span>
+        {!aiAck && <AiAcknowledgementModal onAcknowledge={setAiAck} />}
       </div>
     );
   }
 
   return (
     <div className="flex h-screen bg-[#0F1115] text-white font-sans overflow-hidden">
+      {!aiAck && <AiAcknowledgementModal onAcknowledge={setAiAck} />}
       {/* Sidebar */}
       <div className="w-72 border-r border-white/10 flex flex-col bg-[#16191E]">
         <div className="p-6 border-b border-white/10 flex items-center gap-3">
@@ -1903,6 +1931,7 @@ function AppContent() {
             keywordBoost={keywordBoost}
             keywordTranscribe={keywordTranscribe}
             keywordContext={keywordContext}
+            aiAcknowledgedAt={aiAck?.iso}
           />
         ) : !selectedCase ? (
           <div className="flex-1 flex flex-col items-center justify-center opacity-20">
@@ -2178,14 +2207,22 @@ function AppContent() {
                                 )}
                               </div>
                             ) : (
+                              <div className="space-y-6">
+                              <SpeakerNamePanel
+                                recordingId={selectedRecording.id}
+                                speakerLabels={speakerLabels}
+                                onLabels={setSpeakerLabels}
+                                onSave={saveSpeakerLabels}
+                              />
                               <TranscriptList
                                 recordingId={selectedRecording.id}
                                 speakerLabels={speakerLabels}
                                 onSpeakerLabel={(speaker, name) => setSpeakerLabels({ ...speakerLabels, [speaker]: name })}
-                                onSaveLabels={saveSpeakerLabels}
+                                onSaveLabels={() => saveSpeakerLabels()}
                                 currentTimeMs={currentTime * 1000}
                                 onSeek={seekTo}
                               />
+                              </div>
                             )}
                           </motion.div>
                         )}
@@ -2209,6 +2246,15 @@ function AppContent() {
                                     </div>
                                   </div>
                                   <div className="flex items-center flex-wrap gap-2">
+                                    <button
+                                      onClick={handleCopyFinalSummary}
+                                      data-testid="copy-final-summary"
+                                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-orange-500 text-white text-xs font-bold transition-all"
+                                      title="Copy the Final Summary as plain text"
+                                    >
+                                      {finalCopySuccess ? <Check size={14} /> : <Copy size={14} />}
+                                      <span>{finalCopySuccess ? 'Copied!' : 'Copy Final Summary'}</span>
+                                    </button>
                                     <button 
                                       onClick={handleCopySummary}
                                       className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-semibold transition-all border border-white/10"
@@ -2272,6 +2318,19 @@ function AppContent() {
                                   )}
                                 </div>
 
+                                {selectedRecording.summary && !extractFinalSummary(selectedRecording.summary) && (
+                                  <p className="text-xs text-white/40">This report has no Final Summary section. Regenerate the narrative to add a paste-ready overview.</p>
+                                )}
+                                {selectedRecording.summary && extractFinalSummary(selectedRecording.summary) && (
+                                  <div data-testid="final-summary" className="rounded-2xl border border-orange-500/30 bg-orange-500/5 p-5 space-y-3">
+                                    <p className="text-xs font-bold uppercase tracking-wider text-orange-500">Final Summary</p>
+                                    <p className="whitespace-pre-wrap text-sm leading-relaxed text-white/85">{markdownToPlain(extractFinalSummary(selectedRecording.summary) || '')}</p>
+                                    <p className="text-[11px] text-white/40">{AI_DISCLAIMER}</p>
+                                    {selectedRecording.report_meta?.aiAcknowledgedLabel && (
+                                      <p className="text-[11px] text-white/40">{selectedRecording.report_meta.aiAcknowledgedLabel}</p>
+                                    )}
+                                  </div>
+                                )}
                                 {reportError && (
                                   <div className="rounded-2xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-200 space-y-3">
                                     <p>{reportError}</p>
@@ -2493,6 +2552,13 @@ function AppContent() {
                 </div>
               </div>
               <div className="flex items-center gap-3">
+                <button
+                  onClick={handleCopyFinalSummary}
+                  className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-orange-500 text-white text-xs font-bold transition-all"
+                >
+                  {finalCopySuccess ? <Check size={14} /> : <Copy size={14} />}
+                  <span>{finalCopySuccess ? 'Copied' : 'Copy Final Summary'}</span>
+                </button>
                 <button 
                   onClick={handleCopySummary}
                   className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 text-white text-xs font-semibold transition-all"

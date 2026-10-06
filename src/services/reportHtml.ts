@@ -40,6 +40,7 @@ export function buildPrintableReportHtml(opts: {
   officerBadge?: string | null;
   markdown: string;
   auditLine: string;
+  acknowledgement?: string | null;
 }): string {
   const officer = [opts.officerName, opts.officerBadge ? `#${opts.officerBadge}` : ""].filter(Boolean).join(" ");
   const body = renderReportHtml(opts.markdown);
@@ -83,6 +84,7 @@ export function buildPrintableReportHtml(opts: {
     <div class="content">${body}</div>
     <div class="disclaimer">
       <p><strong>${escapeHtml(AI_DISCLAIMER)}</strong></p>
+      ${opts.acknowledgement?.trim() ? `<p>${escapeHtml(opts.acknowledgement.trim())}</p>` : ""}
       <p>${escapeHtml(opts.auditLine)}</p>
     </div>
   </body>
