@@ -18,6 +18,15 @@ export interface ReportMeta {
   /** Set when the report is generated. Later exports keep this time. */
   aiAcknowledgedAt?: string | null;
   aiAcknowledgedLabel?: string | null;
+  /** Who wrote it: "AssemblyAI", "the local model on this PC" or "Google Gemini". */
+  service?: string | null;
+  /** SHA-256 of the original recording as imported, recorded when the summary was written. */
+  sourceSha256?: string | null;
+  sourceHashAt?: string | null;
+  machineGenerated?: boolean;
+  partCount?: number;
+  resumedParts?: number;
+  appVersion?: string | null;
 }
 
 export interface Recording {
@@ -37,6 +46,12 @@ export interface Recording {
   aai_deleted_at?: string | null;
   has_transcript?: boolean;
   created_at: string;
+  /** SHA-256 of the original audio or video as imported. */
+  source_sha256?: string | null;
+  source_hash_at?: string | null;
+  /** Set only after a person confirmed the review. */
+  reviewed_by?: string | null;
+  reviewed_at?: string | null;
 }
 
 export interface TranscriptData {

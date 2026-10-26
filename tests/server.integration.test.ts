@@ -14,7 +14,7 @@ process.env.NODE_ENV = "test";
 delete process.env.ASSEMBLY_AI_API_KEY;
 delete process.env.GEMINI_API_KEY;
 
-const { createApp } = await import("../server.ts");
+const { createApp, saveJobTranscript, loadSavedTranscript } = await import("../server.ts");
 
 describe("local server", () => {
   let server: Server;
@@ -86,6 +86,25 @@ Use only information contained in the transcript. Do not add facts, names, dates
     assert.equal(row.summary.includes("<reasoning>"), false);
     assert.equal(row.summary.includes("You write investigative reports"), false);
     assert.equal(row.summary.includes("Use only information contained in the transcript"), false);
+  });
+
+  it("serves a Mass Processing transcript from the local copy after the in-memory job is gone, then releases it", async () => {
+    // No job is tracked in memory (as after the 60 minute timer or a restart); only the saved copy exists.
+    const jobId = "saved-job-0001";
+    saveJobTranscript(jobId, { id: "tr-saved", text: "Saved synthetic transcript line.", utterances: [{ speaker: "A", start: 1000, end: 4000, text: "Saved synthetic transcript line." }], words: [] }, "ab".repeat(32), "2026-10-12T14:00:00.000Z");
+    assert.equal(loadSavedTranscript(jobId)?.sha256, "ab".repeat(32));
+    const served = await fetch(`${base}/api/reports/jobs/${jobId}/transcript.txt?name=call`, { headers: auth });
+    assert.equal(served.status, 200);
+    assert.match(await served.text(), /Saved synthetic transcript line\./);
+    const released = await fetch(`${base}/api/keywords/search`, {
+      method: "POST",
+      headers: { ...auth, "Content-Type": "application/json" },
+      body: JSON.stringify({ transcriptJobId: jobId, keywords: ["synthetic"] }),
+    });
+    assert.equal(released.status, 200);
+    assert.equal(loadSavedTranscript(jobId), null);
+    const gone = await fetch(`${base}/api/reports/jobs/${jobId}/transcript.txt`, { headers: auth });
+    assert.equal(gone.status, 404);
   });
 
   it("refuses Gemini when the setting is off", async () => {

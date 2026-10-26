@@ -44,6 +44,30 @@ export function completionMaxTokens(model: string): number {
   return REPORT_MAX_TOKENS;
 }
 
+/**
+ * 6.1.6: the gateway reserves prompt + max_tokens against the per-minute token limit for the whole
+ * request, so each call asks only for what it needs. A "length" finish is still continued.
+ * `scale` is lowered (0.5, 0.25...) after the service says a request is too large.
+ */
+export type CallKind = "chunk" | "single" | "merge" | "timeline";
+
+export function maxTokensFor(opts: { model: string; kind: CallKind; inputTokens: number; scale?: number }): number {
+  const ceiling = completionMaxTokens(opts.model);
+  const reasoningFactor = (opts.model || "").toLowerCase().includes("gpt-oss") ? 2 : 1;
+  const input = Math.max(0, opts.inputTokens);
+  let want: number;
+  switch (opts.kind) {
+    case "chunk": want = 6000; break;
+    case "single": want = Math.round(input * 0.3) + 3000; break;
+    case "merge": want = Math.round(input * 0.8) + 1500; break;
+    default: want = 8000;
+  }
+  const floor = opts.kind === "chunk" ? 4000 : 3000;
+  const sized = Math.min(Math.max(floor, want), opts.kind === "chunk" ? 8000 : ceiling) * reasoningFactor;
+  const scaled = Math.round(sized * (opts.scale ?? 1));
+  return Math.max(1000, Math.min(ceiling, scaled));
+}
+
 /** How much source text one merge should try to rewrite, under the visible output budget. */
 export function visibleOutputBudget(model: string): number {
   const id = (model || "").toLowerCase();
@@ -153,6 +177,8 @@ export async function completeWithContinuation(opts: {
 export interface MergeItem {
   rangeLabel: string;
   text: string;
+  /** True when this part hit the model length limit. Kept so a resumed report still shows the warning. */
+  truncated?: boolean;
 }
 
 /** Group items so each merge stays under tokenBudget. One item is never split. */

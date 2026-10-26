@@ -16,9 +16,8 @@ export interface ElectronBridge {
   exportPdf: (payload: {
     html: string;
     defaultFilename: string;
-    footerNote: string;
-    auditLine: string;
-    headerText?: string;
+    /** Shown on every page with "Page X of Y": case number, report ID, app version and the source hash. */
+    footer: { left: string; hashLine: string };
   }) => Promise<{ canceled: boolean; filePath?: string; error?: string }>;
 }
 

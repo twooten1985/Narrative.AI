@@ -1,6 +1,16 @@
 import DOMPurify from "dompurify";
 import { marked } from "marked";
-import { AI_DISCLAIMER } from "./audit";
+import {
+  REPORT_CSS,
+  buildNoteHtml,
+  markShortParagraphs,
+  markUnverifiedHtml,
+  renderHeaderBlockHtml,
+  renderSignoffHtml,
+  renderTranscriptHtml,
+  type ReportExportInput,
+} from "./reportExport";
+import { sortUnclearAudio } from "./timestamps";
 
 marked.setOptions({ gfm: true, breaks: false });
 
@@ -31,62 +41,63 @@ export function renderReportHtml(markdown: string | null | undefined): string {
   });
 }
 
-export function buildPrintableReportHtml(opts: {
+export interface PrintableReportOptions {
+  /** The full case-report description. Preferred. */
+  report?: ReportExportInput;
+  /** Older fields. Used only when `report` is not given. */
   caseName?: string | null;
   recordingName?: string | null;
   interviewType?: string | null;
-  reportDate: string;
+  reportDate?: string;
   officerName?: string | null;
   officerBadge?: string | null;
-  markdown: string;
-  auditLine: string;
+  markdown?: string;
+  auditLine?: string;
   acknowledgement?: string | null;
-}): string {
+}
+
+/** Builds the export description from the older fields. The audit line (request IDs) is never copied. */
+export function reportFromLegacy(opts: PrintableReportOptions): ReportExportInput {
   const officer = [opts.officerName, opts.officerBadge ? `#${opts.officerBadge}` : ""].filter(Boolean).join(" ");
-  const body = renderReportHtml(opts.markdown);
+  return {
+    caseNumber: opts.caseName || "",
+    examiner: officer || null,
+    sourceFileName: opts.recordingName || "",
+    generatedAt: opts.reportDate || null,
+    appVersion: "",
+    reportId: "NAR-UNSET",
+    reportType: opts.interviewType || null,
+    markdown: opts.markdown || "",
+    acknowledgement: opts.acknowledgement || null,
+  };
+}
+
+/**
+ * The printable case report: header block and summary on page one, the full transcript on a new page,
+ * a reviewer sign-off at the end. Quiet styling that still reads well in black and white.
+ * It carries no API keys, request IDs or diagnostics.
+ */
+export function buildPrintableReportHtml(opts: PrintableReportOptions): string {
+  const report = opts.report || reportFromLegacy(opts);
+  const body = markShortParagraphs(markUnverifiedHtml(renderReportHtml(sortUnclearAudio(report.markdown))));
   return `<!DOCTYPE html>
-<html>
+<html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>Investigative Report - ${escapeHtml(opts.caseName || "Case")}</title>
+    <title>Investigative Report - ${escapeHtml(report.caseNumber || "Case")}</title>
     <style>
-      body { font-family: "Segoe UI", Arial, sans-serif; margin: 40px; color: #111; line-height: 1.5; }
-      h1 { font-size: 22px; margin: 0 0 8px; }
-      h2 { font-size: 16px; margin-top: 22px; border-bottom: 1px solid #ccc; padding-bottom: 4px; }
-      h3 { font-size: 14px; margin-top: 16px; }
-      .banner { display: flex; justify-content: space-between; border-bottom: 3px solid #000; padding-bottom: 10px; margin-bottom: 16px; }
-      .banner small { color: #444; }
-      .meta { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 16px; background: #f4f4f5; border: 1px solid #e4e4e7; border-radius: 8px; padding: 12px 14px; margin-bottom: 18px; font-size: 13px; }
-      .content { font-size: 14px; overflow: visible; max-height: none; }
-      .content ul, .content ol { padding-left: 1.3rem; }
-      .content p, .content li, .content h1, .content h2, .content h3 { overflow: visible; max-height: none; page-break-inside: auto; break-inside: auto; }
-      .content h2, .content h3 { break-after: avoid; }
-      .disclaimer { margin-top: 28px; border-top: 1px solid #999; padding-top: 8px; font-size: 12px; color: #333; }
-      .disclaimer strong { font-style: italic; }
-      @media print { body { margin: 12px; } .content, .content p, .content li { overflow: visible; page-break-inside: auto; } }
+${REPORT_CSS}
+      .content, .content p, .content li, .content h1, .content h2, .content h3 { overflow: visible; max-height: none; page-break-inside: auto; }
+      @media print { .content, .content p, .content li { overflow: visible; page-break-inside: auto; } }
     </style>
   </head>
   <body>
-    <div class="banner">
-      <div>
-        <h1>OFFICIAL INVESTIGATIVE REPORT</h1>
-        <small>Narrative AI</small>
-      </div>
-      <div><small>CONFIDENTIAL / LAW ENFORCEMENT USE ONLY</small></div>
-    </div>
-    <div class="meta">
-      <div><strong>Case:</strong> ${escapeHtml(opts.caseName || "Not provided")}</div>
-      <div><strong>Recording:</strong> ${escapeHtml(opts.recordingName || "Not provided")}</div>
-      <div><strong>Report type:</strong> ${escapeHtml(opts.interviewType || "Not provided")}</div>
-      <div><strong>Report date:</strong> ${escapeHtml(opts.reportDate)}</div>
-      <div><strong>Officer:</strong> ${escapeHtml(officer || "Not provided")}</div>
-    </div>
+    ${renderHeaderBlockHtml(report)}
+    <h2 class="section">Summary</h2>
     <div class="content">${body}</div>
-    <div class="disclaimer">
-      <p><strong>${escapeHtml(AI_DISCLAIMER)}</strong></p>
-      ${opts.acknowledgement?.trim() ? `<p>${escapeHtml(opts.acknowledgement.trim())}</p>` : ""}
-      <p>${escapeHtml(opts.auditLine)}</p>
-    </div>
+    ${buildNoteHtml(report)}
+    ${renderTranscriptHtml(report)}
+    ${renderSignoffHtml(report)}
   </body>
 </html>`;
 }

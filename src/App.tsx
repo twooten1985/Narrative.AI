@@ -45,15 +45,20 @@ import { TranscriptList } from './components/TranscriptList';
 import { AiAcknowledgementModal, type SessionAcknowledgement } from './components/AiAcknowledgementModal';
 import { SpeakerNamePanel } from './components/SpeakerNamePanel';
 import { apiFetch, initApiSession } from './services/apiClient';
-import { deleteRemoteTranscript, generateReportOnServer, transcribeLocally, transcribeOnServer } from './services/reportClient';
+import { cancelReportJob, deleteRemoteTranscript, generateReportOnServer, isReportJobError, transcribeLocally, transcribeOnServer, type ReportErrorInfo, type RetryState } from './services/reportClient';
+import { EngineBadge, RetryBanner, SummaryErrorPanel, type SummaryProviderSetting } from './components/SummaryStatus';
+import { SummarySettings } from './components/SummarySettings';
+import { destinationNote } from './services/summaryEngine';
 import { pollWithBackoff } from './services/polling';
 import { buildPrintableReportHtml } from './services/reportHtml';
+import { findGaps, findGenderedPronouns, gapLabel, segmentUtterances, sortUnclearAudio, verifyTimestamps } from './services/timestamps';
+import { exportFooter, flaggedUtteranceText, makeReportId, type ExportTranscriptRow, type ReportExportInput } from './services/reportExport';
 import { reportToDocxBlob } from './services/reportDocx';
 import { AI_DISCLAIMER, formatAuditLine, formatGeneratedAt } from './services/audit';
 import { extractFinalSummary, finalSummaryClipboard, markdownToPlain } from './services/finalSummary';
 import { getElectron } from './electron-bridge';
 import { APP_VERSION } from './version';
-import { DEFAULT_AAI_API_BASE, DEFAULT_LLM_GATEWAY_URL } from './services/config';
+import { DEFAULT_AAI_API_BASE, DEFAULT_CHUNK_TOKEN_LIMIT, DEFAULT_LLM_GATEWAY_URL, DEFAULT_LOCAL_CHUNK_TOKEN_LIMIT, DEFAULT_LOCAL_LLM_URL } from './services/config';
 
 export const getAssemblyAISummary = (transcript: any): string => {
   if (transcript?.speech_understanding?.response?.summarization?.status === 'success') {
@@ -143,7 +148,19 @@ function AppContent() {
   const [officerBadge, setOfficerBadge] = useState('');
   const [aaiApiBase, setAaiApiBase] = useState(DEFAULT_AAI_API_BASE);
   const [llmGatewayUrl, setLlmGatewayUrl] = useState(DEFAULT_LLM_GATEWAY_URL);
-  const [chunkTokenLimit, setChunkTokenLimit] = useState(100000);
+  const [chunkTokenLimit, setChunkTokenLimit] = useState(DEFAULT_CHUNK_TOKEN_LIMIT);
+  const [summaryProvider, setSummaryProvider] = useState<SummaryProviderSetting>('gateway');
+  const [localLlmUrl, setLocalLlmUrl] = useState(DEFAULT_LOCAL_LLM_URL);
+  const [localLlmModel, setLocalLlmModel] = useState('');
+  const [localChunkTokenLimit, setLocalChunkTokenLimit] = useState(DEFAULT_LOCAL_CHUNK_TOKEN_LIMIT);
+  const [gatewayConcurrency, setGatewayConcurrency] = useState(1);
+  const [allowModelFallback, setAllowModelFallback] = useState(false);
+  const [reportErrorInfo, setReportErrorInfo] = useState<ReportErrorInfo | null>(null);
+  const [reportPartial, setReportPartial] = useState<{ saved: number; total: number } | null>(null);
+  const [reportRetry, setReportRetry] = useState<RetryState | null>(null);
+  const [reportJobId, setReportJobId] = useState<string | null>(null);
+  const [reviewerNameInput, setReviewerNameInput] = useState('');
+  const [isConfirmingReview, setIsConfirmingReview] = useState(false);
   const [massConcurrency, setMassConcurrency] = useState(2);
   const [preferAssemblySummary, setPreferAssemblySummary] = useState(localStorage.getItem('prefer_assembly_summary') === 'true');
   const [reportError, setReportError] = useState<string | null>(null);
@@ -175,7 +192,13 @@ function AppContent() {
   const [tempOfficerBadge, setTempOfficerBadge] = useState('');
   const [tempApiBase, setTempApiBase] = useState(DEFAULT_AAI_API_BASE);
   const [tempGatewayUrl, setTempGatewayUrl] = useState(DEFAULT_LLM_GATEWAY_URL);
-  const [tempChunkLimit, setTempChunkLimit] = useState('100000');
+  const [tempChunkLimit, setTempChunkLimit] = useState(String(DEFAULT_CHUNK_TOKEN_LIMIT));
+  const [tempProvider, setTempProvider] = useState<SummaryProviderSetting>('gateway');
+  const [tempLocalUrl, setTempLocalUrl] = useState(DEFAULT_LOCAL_LLM_URL);
+  const [tempLocalModel, setTempLocalModel] = useState('');
+  const [tempLocalChunk, setTempLocalChunk] = useState(String(DEFAULT_LOCAL_CHUNK_TOKEN_LIMIT));
+  const [tempConcurrency, setTempConcurrency] = useState('1');
+  const [tempAllowFallback, setTempAllowFallback] = useState(false);
   const [tempMassConcurrency, setTempMassConcurrency] = useState('2');
   const [tempPreferAssembly, setTempPreferAssembly] = useState(preferAssemblySummary);
   const [gatewayModel, setGatewayModel] = useState<string>(localStorage.getItem('gateway_model') || 'claude-sonnet-4-6');
@@ -296,35 +319,93 @@ function AppContent() {
     }
   };
 
-  const currentAudit = (meta?: ReportMeta | null) => formatAuditLine({
-    model: meta?.model,
-    requestId: meta?.requestId,
-    transcriptId: meta?.transcriptId,
-    generatedAt: meta?.generatedAt,
-  });
+  // Everything the exported case report needs. It never includes API keys, request IDs or diagnostics.
+  const buildExportInput = async (rec: Recording, withTranscript: boolean): Promise<ReportExportInput> => {
+    const meta = rec.report_meta;
+    const rows: ExportTranscriptRow[] = [];
+    const rawUtterances: any[] = [];
+    let transcriptIdSeen: string | null = null;
+    let durationMs: number | null = null;
+    if (withTranscript && rec.has_transcript) {
+      let offset = 0;
+      while (rows.length < 40000) {
+        const page = await apiFetch(`/api/recordings/${rec.id}/utterances?offset=${offset}&limit=100&words=1`);
+        const batch = page.utterances || [];
+        if (durationMs === null && page.durationMs) durationMs = Number(page.durationMs) || null;
+        if (page.transcriptId) transcriptIdSeen = page.transcriptId;
+        for (const row of batch) rawUtterances.push(row);
+        offset += batch.length;
+        if (!batch.length || offset >= (page.total || 0)) break;
+      }
+    }
+    // Long answers are cut into segments of at most 30 seconds, each with its own time, so the summary and the
+    // transcript table agree. Stretches of more than 60 seconds with no speech are marked in the table.
+    const segments = segmentUtterances(rawUtterances);
+    for (const seg of segments) rows.push({ speaker: seg.speaker, startMs: seg.startMs, text: flaggedUtteranceText(seg.words, seg.text) });
+    for (const gap of findGaps(segments, { minMs: 60000, durationMs })) {
+      rows.push({ speaker: "", startMs: gap.fromMs, endMs: gap.toMs, kind: "gap", text: gapLabel(gap) });
+    }
+    rows.sort((x, y) => x.startMs - y.startMs);
+    // Check every time in the summary against the transcript once more (also fixes reports written by older versions).
+    let markdownOut = rec.summary || "";
+    let timestampCheck: ReportExportInput["timestampCheck"] = null;
+    if (segments.length && markdownOut) {
+      const checked = verifyTimestamps(markdownOut, segments);
+      markdownOut = checked.text;
+      timestampCheck = { cited: checked.cited, verified: checked.verified, corrected: checked.corrected, unverified: checked.unverified };
+    }
+    markdownOut = sortUnclearAudio(markdownOut);
+    const pronouns = findGenderedPronouns(markdownOut);
+    let sourceSha256 = meta?.sourceSha256 || rec.source_sha256 || null;
+    if (!sourceSha256) {
+      try {
+        const h = await apiFetch(`/api/recordings/${rec.id}/source-hash`);
+        sourceSha256 = h?.sourceSha256 || null;
+      } catch { sourceSha256 = null; }
+    }
+    const generatedAt = meta?.generatedAt || null;
+    const reportId = await makeReportId([rec.id, generatedAt, sourceSha256, (rec.summary || '').length]);
+    return {
+      caseNumber: selectedCase?.name || '',
+      examiner: [officerName, officerBadge ? `#${officerBadge}` : ''].filter(Boolean).join(' ') || null,
+      sourceFileName: rec.original_name,
+      importedAt: rec.created_at,
+      durationMs,
+      sourceSha256,
+      generatedAt,
+      service: meta?.service || (meta?.engine === 'gemini' ? 'Google Gemini' : meta?.engine === 'local' ? 'Local model on this PC' : meta?.engine ? 'AssemblyAI' : null),
+      model: meta?.model || null,
+      appVersion: APP_VERSION,
+      reportId,
+      reportType: rec.interview_type || interviewType,
+      markdown: markdownOut,
+      transcriptionService: /^local-whisper/i.test(String(transcriptIdSeen || meta?.transcriptId || '')) ? 'Local Whisper on this PC' : 'AssemblyAI',
+      timestampCheck,
+      pronounCheck: pronouns.count ? pronouns : null,
+      transcript: rows,
+      speakerLabels,
+      reviewedBy: rec.reviewed_by || null,
+      reviewedAt: rec.reviewed_at || null,
+      acknowledgement: meta?.aiAcknowledgedLabel || null,
+    };
+  };
 
-  const printableHtml = (summary: string, meta?: ReportMeta | null) => buildPrintableReportHtml({
-    caseName: selectedCase?.name,
-    recordingName: selectedRecording?.original_name,
-    interviewType: selectedRecording?.interview_type || interviewType,
-    reportDate: formatGeneratedAt(meta?.generatedAt) === 'Unknown'
-      ? format(new Date(), 'yyyy-MM-dd HH:mm:ss')
-      : formatGeneratedAt(meta?.generatedAt),
-    officerName,
-    officerBadge,
-    markdown: summary,
-    auditLine: currentAudit(meta),
-    acknowledgement: meta?.aiAcknowledgedLabel,
-  });
+  const printableHtml = async (rec: Recording) => buildPrintableReportHtml({ report: await buildExportInput(rec, true) });
 
-  const handlePrintReport = () => {
+  const handlePrintReport = async () => {
     if (!selectedRecording?.summary) return;
     const printWindow = window.open('', '_blank');
     if (!printWindow) {
       alert("Please allow popups in your browser to print official reports.");
       return;
     }
-    printWindow.document.write(printableHtml(selectedRecording.summary, selectedRecording.report_meta));
+    try {
+      printWindow.document.write(await printableHtml(selectedRecording));
+    } catch (e: any) {
+      printWindow.close();
+      alert(`The report could not be prepared: ${e?.message || e}`);
+      return;
+    }
     printWindow.document.close();
     printWindow.focus();
     setTimeout(() => {
@@ -339,19 +420,20 @@ function AppContent() {
       alert("PDF export uses the desktop app. Use Print to save a PDF from the browser preview.");
       return;
     }
-    const meta = selectedRecording.report_meta;
-    const officer = [officerName, officerBadge ? `#${officerBadge}` : ''].filter(Boolean).join(' ');
-    const headerText = [`Case: ${selectedCase?.name || 'Untitled case'}`, officer, formatGeneratedAt(meta?.generatedAt)].filter(Boolean).join('   |   ');
+    let input: ReportExportInput;
+    try {
+      input = await buildExportInput(selectedRecording, true);
+    } catch (e: any) {
+      alert(`The report could not be prepared: ${e?.message || e}`);
+      return;
+    }
     const result = await electron.exportPdf({
-      html: printableHtml(selectedRecording.summary, meta),
+      html: buildPrintableReportHtml({ report: input }),
       defaultFilename: `${selectedCase?.name || 'case'}_${selectedRecording.original_name}.pdf`,
-      footerNote: [AI_DISCLAIMER, meta?.aiAcknowledgedLabel].filter(Boolean).join(' '),
-      auditLine: currentAudit(meta),
-      headerText,
+      footer: exportFooter(input),
     });
     if (result?.error) alert(`PDF export failed: ${result.error}`);
   };
-
   const highlightText = (text: string, query: string) => {
     if (!query.trim()) return text;
     const regex = new RegExp(`(${query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
@@ -478,7 +560,13 @@ function AppContent() {
     setOfficerBadge(settings.officerBadge || '');
     setAaiApiBase(settings.aaiApiBase || DEFAULT_AAI_API_BASE);
     setLlmGatewayUrl(settings.llmGatewayUrl || DEFAULT_LLM_GATEWAY_URL);
-    setChunkTokenLimit(Number(settings.chunkTokenLimit) || 100000);
+    setChunkTokenLimit(Number(settings.chunkTokenLimit) || DEFAULT_CHUNK_TOKEN_LIMIT);
+    setSummaryProvider(settings.summaryProvider === 'local' || settings.summaryProvider === 'off' ? settings.summaryProvider : 'gateway');
+    setLocalLlmUrl(settings.localLlmUrl || DEFAULT_LOCAL_LLM_URL);
+    setLocalLlmModel(settings.localLlmModel || '');
+    setLocalChunkTokenLimit(Number(settings.localChunkTokenLimit) || DEFAULT_LOCAL_CHUNK_TOKEN_LIMIT);
+    setGatewayConcurrency(Number(settings.gatewayConcurrency) === 2 ? 2 : 1);
+    setAllowModelFallback(settings.allowModelFallback === true);
     setMassConcurrency(Number(settings.massConcurrency) || 2);
     setHasAssemblyKey(Boolean(settings.hasAssemblyKey));
     setHasGeminiKey(Boolean(settings.hasGeminiKey));
@@ -532,6 +620,12 @@ function AppContent() {
     setTempGatewayUrl(llmGatewayUrl);
     setTempChunkLimit(String(chunkTokenLimit));
     setTempMassConcurrency(String(massConcurrency));
+    setTempProvider(summaryProvider);
+    setTempLocalUrl(localLlmUrl);
+    setTempLocalModel(localLlmModel);
+    setTempLocalChunk(String(localChunkTokenLimit));
+    setTempConcurrency(String(gatewayConcurrency));
+    setTempAllowFallback(allowModelFallback);
   }, [isSettingsOpen]);
 
   useEffect(() => {
@@ -580,6 +674,12 @@ function AppContent() {
           llmGatewayUrl: tempGatewayUrl,
           chunkTokenLimit: Number(tempChunkLimit),
           massConcurrency: Number(tempMassConcurrency),
+          summaryProvider: tempProvider,
+          localLlmUrl: tempLocalUrl,
+          localLlmModel: tempLocalModel,
+          localChunkTokenLimit: Number(tempLocalChunk),
+          gatewayConcurrency: Number(tempConcurrency) === 2 ? 2 : 1,
+          allowModelFallback: tempAllowFallback,
         }),
       });
       applyServerSettings(savedSettings);
@@ -694,12 +794,108 @@ function AppContent() {
     }
   };
 
-  const blockedGeminiNote = () => {
-    if (allowGemini && !preferAssemblySummary) return '';
-    return ' Google Gemini is turned off, so this case was not sent to Google.';
+  // The Google line is added only when Gemini was the engine involved. Every other
+  // message says where the request really went, or that nothing left this PC.
+  const blockedGeminiNote = (engine?: 'gateway' | 'gemini' | 'local', sent = true) => {
+    if (engine === 'gemini' && (!allowGemini || preferAssemblySummary)) {
+      return ' Google Gemini is turned off, so this case was not sent to Google.';
+    }
+    if (!sent) return '';
+    const real = engine || (summaryProvider === 'local' ? 'local' : summaryProvider === 'off' ? null : 'gateway');
+    const note = destinationNote(real);
+    return note ? ` ${note}` : '';
   };
 
-  const handleGenerateTimeline = async (engine: 'gateway' | 'gemini' = 'gateway') => {
+  const effectiveProvider: SummaryProviderSetting = summaryProvider;
+
+  const handleConfirmReview = async (confirm: boolean) => {
+    if (!selectedRecording) return;
+    const reviewerName = reviewerNameInput.trim() || officerName.trim();
+    if (confirm && !reviewerName) {
+      alert('Type the name of the person who reviewed this summary.');
+      return;
+    }
+    setIsConfirmingReview(true);
+    try {
+      await apiFetch(`/api/recordings/${selectedRecording.id}/review`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirm, reviewerName: confirm ? reviewerName : undefined }),
+      });
+      setSelectedRecording(await apiFetch(`/api/recordings/${selectedRecording.id}`));
+    } catch (e: any) {
+      alert(e?.message || 'The review could not be saved.');
+    } finally {
+      setIsConfirmingReview(false);
+    }
+  };
+
+  // Retry countdown, the plain failure message and the details drawer for the Summary tab.
+  const renderSummaryProblems = (recId: string | null) => (
+    <>
+      <RetryBanner retry={reportRetry} onCancel={reportJobId ? handleCancelSummary : undefined} />
+      {reportError && !isRegeneratingSummary && (
+        <SummaryErrorPanel
+          message={reportError}
+          info={reportErrorInfo}
+          partial={reportPartial}
+          provider={summaryProvider}
+          recordingId={recId}
+          busy={isRegeneratingSummary}
+          canUseLocal={summaryProvider !== 'local' && summaryProvider !== 'off' && !!localLlmModel}
+          canUseGemini={allowGemini && !preferAssemblySummary}
+          onRetry={() => handleRegenerateSummary()}
+          onUseLocal={() => handleRegenerateSummary(undefined, 'local')}
+          onUseGemini={() => handleRegenerateSummary(undefined, 'gemini')}
+        />
+      )}
+    </>
+  );
+
+  // Who wrote the summary and whether a person has checked it.
+  const renderReviewBar = (rec: Recording) => {
+    const meta = rec.report_meta;
+    const reviewed = !!(rec.reviewed_by && rec.reviewed_at);
+    return (
+      <div data-testid="review-bar" className="rounded-2xl border border-white/10 bg-white/5 p-4 space-y-3 text-xs">
+        <p className="text-white/70">
+          <span className="font-bold text-white">Machine-generated, requires officer review.</span>{' '}
+          {meta?.service ? `Written by ${meta.service}` : 'Written by the summary service'}
+          {meta?.model ? `, model ${meta.model}` : ''}
+          {meta?.generatedAt ? `, ${formatGeneratedAt(meta.generatedAt)}` : ''}.
+        </p>
+        {reviewed ? (
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="inline-flex items-center gap-1.5 rounded-lg bg-green-500/15 px-2.5 py-1 font-bold text-green-300">
+              <Check size={12} /> Officer reviewed: {rec.reviewed_by}, {formatGeneratedAt(rec.reviewed_at)}
+            </span>
+            <button onClick={() => handleConfirmReview(false)} disabled={isConfirmingReview} className="text-white/50 underline disabled:opacity-50">Undo</button>
+          </div>
+        ) : (
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              value={reviewerNameInput}
+              onChange={(e) => setReviewerNameInput(e.target.value)}
+              placeholder={officerName ? `Reviewer name (${officerName})` : 'Reviewer name'}
+              aria-label="Reviewer name"
+              className="w-56 rounded-lg border border-white/10 bg-black/30 px-3 py-1.5 text-xs text-white placeholder:text-white/30 focus:border-orange-500/50 focus:outline-none"
+            />
+            <button
+              onClick={() => handleConfirmReview(true)}
+              disabled={isConfirmingReview}
+              className="rounded-lg bg-white px-3 py-1.5 font-bold text-black disabled:opacity-50"
+              title="Press only after you have read the summary against the recording"
+            >
+              I reviewed this summary
+            </button>
+            <span className="text-white/40">Not yet reviewed by a person.</span>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const handleGenerateTimeline = async (engine?: 'gemini' | 'local') => {
     if (!selectedCase) return;
     setIsGeneratingTimeline(true);
     setTimelineError(null);
@@ -710,13 +906,14 @@ function AppContent() {
         body: JSON.stringify({
           model: gatewayModel,
           engine,
+          useLocalModel: engine === 'local',
           strictlyAssembly: preferAssemblySummary,
         })
       });
       setTimelineReport(res.timelineReport);
       setTimelineMeta(res.timelineMeta || null);
     } catch (e: any) {
-      setTimelineError(`${e.message || 'Timeline generation failed.'}${engine === 'gateway' ? blockedGeminiNote() : ''}`);
+      setTimelineError(`${e.message || 'Timeline generation failed.'}${blockedGeminiNote(engine, !e?.status || e.status >= 500)}`);
     } finally {
       setIsGeneratingTimeline(false);
     }
@@ -883,9 +1080,32 @@ function AppContent() {
     };
   };
 
-  const saveReport = async (type: string, rec: Recording, engine: 'gateway' | 'gemini') => {
+  // Shows a failed or stopped summary. The transcript and finished parts stay saved.
+  const captureReportFailure = (error: any, engine?: 'gemini' | 'local') => {
+    const info = isReportJobError(error) ? error.info : null;
+    const partial = isReportJobError(error) ? error.partial : null;
+    const refused = typeof error?.status === 'number' && error.status >= 400 && error.status < 500;
+    setReportError(`${error?.message || error}${blockedGeminiNote(engine, !refused)}`);
+    setReportErrorInfo(info);
+    setReportPartial(partial);
+    if (isReportJobError(error) && error.jobId) setReportJobId(error.jobId);
+  };
+
+  const clearReportFailure = () => {
+    setReportError(null);
+    setReportErrorInfo(null);
+    setReportPartial(null);
+    setReportRetry(null);
+  };
+
+  const handleCancelSummary = async () => {
+    if (!reportJobId) return;
+    try { await cancelReportJob(reportJobId); } catch (e) { console.warn('Cancel failed.', e); }
+  };
+
+  const saveReport = async (type: string, rec: Recording, engine?: 'gemini' | 'local') => {
     const reportReq = buildReportRequest(type, rec);
-    setProcessingStatus(engine === 'gemini' ? 'Writing the report with Gemini…' : 'Writing the report…');
+    setProcessingStatus(engine === 'gemini' ? 'Writing the report with Gemini...' : engine === 'local' || summaryProvider === 'local' ? 'Writing the report on this PC...' : 'Writing the report...');
     const result = await generateReportOnServer({
       recordingId: rec.id,
       reportType: reportReq.reportType,
@@ -894,9 +1114,12 @@ function AppContent() {
       caseInfo: reportReq.caseInfo,
       model: gatewayModel,
       engine,
+      useLocalModel: engine === 'local',
       aiAcknowledgedAt: aiAck?.iso,
       strictlyAssembly: preferAssemblySummary,
       onProgress: (message) => setProcessingStatus(message),
+      onJobStarted: (id) => setReportJobId(id),
+      onRetry: (retry) => setReportRetry(retry),
     });
     let apod = null;
     if (type === 'Child Harm Suspect Interview' && allowGemini && !preferAssemblySummary) {
@@ -924,6 +1147,12 @@ function AppContent() {
       truncated: result.truncated,
       aiAcknowledgedAt: result.aiAcknowledgedAt || aiAck?.iso || null,
       aiAcknowledgedLabel: result.aiAcknowledgedLabel || null,
+      service: result.service || null,
+      sourceSha256: result.sourceSha256 || null,
+      machineGenerated: true,
+      partCount: result.partCount,
+      resumedParts: result.resumedParts,
+      appVersion: APP_VERSION,
     };
     await apiFetch(`/api/recordings/${rec.id}`, {
       method: 'PATCH',
@@ -950,7 +1179,7 @@ function AppContent() {
       return;
     }
     setIsProcessing(true);
-    setReportError(null);
+    clearReportFailure();
     setTranscriptionError(null);
     setProcessingProgress(10);
     try {
@@ -973,16 +1202,21 @@ function AppContent() {
         });
       }
       setProcessingProgress(88);
-      const engine = (!hasAssemblyKey && allowGemini && !preferAssemblySummary) ? 'gemini' : 'gateway';
-      if (engine === 'gateway' && !hasAssemblyKey) {
-        throw new Error(`An AssemblyAI API key is required.${blockedGeminiNote()}`);
-      }
-      try {
-        await saveReport(interviewType, selectedRecording, engine);
-      } catch (summaryError: any) {
-        console.error(summaryError);
-        setReportError(`${summaryError.message || summaryError}${blockedGeminiNote()}`);
+      // No automatic switching: the summary goes only where Settings says.
+      if (summaryProvider === 'off') {
+        setReportError('Summaries are turned off in Settings. The transcript is saved.');
         setActiveTab('summary');
+      } else if (summaryProvider === 'gateway' && !hasAssemblyKey) {
+        setReportError('An AssemblyAI API key is required to write the summary. The transcript is saved. Add the key in Settings, then press Generate.');
+        setActiveTab('summary');
+      } else {
+        try {
+          await saveReport(interviewType, selectedRecording);
+        } catch (summaryError: any) {
+          console.error(summaryError);
+          captureReportFailure(summaryError);
+          setActiveTab('summary');
+        }
       }
       setProcessingProgress(100);
       setProcessingStatus('Complete');
@@ -1013,36 +1247,15 @@ function AppContent() {
 
   const handleExportDocx = async () => {
     if (!selectedRecording || !selectedCase) return;
-    const meta = selectedRecording.report_meta;
-    const reportDate = formatGeneratedAt(meta?.generatedAt) === 'Unknown'
-      ? format(new Date(), 'yyyy-MM-dd HH:mm:ss')
-      : formatGeneratedAt(meta?.generatedAt);
-    const utteranceLines: { speaker: string; startMs: number; text: string }[] = [];
-    if (selectedRecording.has_transcript) {
-      let offset = 0;
-      while (utteranceLines.length < 20000) {
-        const page = await apiFetch(`/api/recordings/${selectedRecording.id}/utterances?offset=${offset}&limit=200&words=0`);
-        const rows = page.utterances || [];
-        for (const row of rows) utteranceLines.push({ speaker: row.speaker, startMs: row.start, text: row.text });
-        offset += rows.length;
-        if (!rows.length || offset >= (page.total || 0)) break;
-      }
+    try {
+      const report = await buildExportInput(selectedRecording, true);
+      if (!report.markdown) report.markdown = 'No summary available.';
+      const blob = await reportToDocxBlob({ report });
+      saveAs(blob, `${selectedCase.name}_${selectedRecording.original_name}.docx`);
+    } catch (e: any) {
+      alert(`The report could not be prepared: ${e?.message || e}`);
     }
-    const blob = await reportToDocxBlob({
-      caseName: selectedCase.name,
-      recordingName: selectedRecording.original_name,
-      reportMarkdown: selectedRecording.summary || 'No summary available.',
-      officerName,
-      officerBadge,
-      reportDate,
-      auditLine: currentAudit(meta),
-      acknowledgement: meta?.aiAcknowledgedLabel,
-      speakerLabels,
-      utterances: utteranceLines,
-    });
-    saveAs(blob, `${selectedCase.name}_${selectedRecording.original_name}.docx`);
   };
-
   const seekTo = (time: number) => {
     if (mediaRef.current && isFinite(time)) {
       mediaRef.current.currentTime = time;
@@ -1072,23 +1285,27 @@ function AppContent() {
     setIsRegenConfirmOpen(true);
   };
 
-  const handleRegenerateSummary = async (typeOverride?: string, engineOverride?: 'gateway' | 'gemini') => {
+  const handleRegenerateSummary = async (typeOverride?: string, engineOverride?: 'gemini' | 'local') => {
     if (!selectedRecording?.has_transcript) {
       alert("No transcript available to generate summary from.");
       return;
     }
     const finalType = typeOverride || interviewType;
-    const engine = engineOverride || ((!hasAssemblyKey && allowGemini && !preferAssemblySummary) ? 'gemini' : 'gateway');
+    const engine = engineOverride;
     if (engine === 'gemini' && (!allowGemini || preferAssemblySummary)) {
-      setReportError('Google Gemini is turned off, so this case was not sent to Google.');
+      setReportError(blockedGeminiNote('gemini').trim());
       return;
     }
-    if (engine === 'gateway' && !hasAssemblyKey) {
-      setReportError(`An AssemblyAI API key is required.${blockedGeminiNote()}`);
+    if (summaryProvider === 'off' && !engine) {
+      setReportError('Summaries are turned off in Settings.');
+      return;
+    }
+    if (!engine && summaryProvider === 'gateway' && !hasAssemblyKey) {
+      setReportError('An AssemblyAI API key is required to write the summary. Add it in Settings.');
       return;
     }
     setIsRegeneratingSummary(true);
-    setReportError(null);
+    clearReportFailure();
     try {
       await saveReport(finalType, selectedRecording, engine);
       setInterviewType(finalType);
@@ -1096,7 +1313,7 @@ function AppContent() {
       setSelectedRecording(updatedRec);
     } catch (error: any) {
       console.error("Failed to regenerate summary:", error);
-      setReportError(`${error.message || error}${engine === 'gateway' ? blockedGeminiNote() : ''}`);
+      captureReportFailure(error, engine);
     } finally {
       setIsRegeneratingSummary(false);
     }
@@ -1475,7 +1692,7 @@ function AppContent() {
                         <option value="gpt-oss-120b">gpt-oss-120b (Fewest refusals; reasoning text is stripped automatically)</option>
                       </select>
                       <p className="text-[10px] text-white/30 px-1">
-                        The other model is used automatically if the selected model returns an error.
+                        The other model is used only if you turn on "Allow the other gateway model" below. Nothing is switched without your say-so.
                       </p>
                     </div>
 
@@ -1506,6 +1723,21 @@ function AppContent() {
                       <input value={tempMassConcurrency} onChange={e => setTempMassConcurrency(e.target.value)} className="w-full bg-black/20 border border-white/10 rounded-xl px-3 py-2 text-sm outline-none focus:border-orange-500" />
                       <p className="text-[10px] text-white/30 px-1">How many jail calls or keyword files run together. 1 to 4. Default 2.</p>
                     </div>
+                    <SummarySettings
+                      provider={tempProvider}
+                      onProvider={setTempProvider}
+                      localUrl={tempLocalUrl}
+                      onLocalUrl={setTempLocalUrl}
+                      localModel={tempLocalModel}
+                      onLocalModel={setTempLocalModel}
+                      localChunk={tempLocalChunk}
+                      onLocalChunk={setTempLocalChunk}
+                      concurrency={tempConcurrency}
+                      onConcurrency={setTempConcurrency}
+                      allowFallback={tempAllowFallback}
+                      onAllowFallback={setTempAllowFallback}
+                      model={tempGatewayModel}
+                    />
                     <div className="space-y-2 rounded-xl border border-white/10 p-4">
                       <p className="text-sm font-bold">Test my keys</p>
                       <p className="text-[10px] text-white/40">Checks the saved key with a short authenticated call. The key is not shown or written to the log. Gemini is tested only when it is enabled.</p>
@@ -1924,6 +2156,8 @@ function AppContent() {
             gatewayModel={gatewayModel}
             hasAssemblyKey={hasAssemblyKey}
             hasGeminiKey={hasGeminiKey}
+            summaryProvider={summaryProvider}
+            hasLocalModel={!!localLlmModel}
             massConcurrency={massConcurrency}
             jailCallQueue={jailCallQueue}
             jailCallTranscribe={jailCallTranscribe}
@@ -2128,6 +2362,7 @@ function AppContent() {
                         )}
                       </div>
                       <div className="flex items-center gap-2">
+                        <EngineBadge provider={effectiveProvider} />
                         {selectedRecording.has_transcript && (
                           <button 
                             onClick={triggerRegeneratePrompt}
@@ -2331,17 +2566,8 @@ function AppContent() {
                                     )}
                                   </div>
                                 )}
-                                {reportError && (
-                                  <div className="rounded-2xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-200 space-y-3">
-                                    <p>{reportError}</p>
-                                    <div className="flex flex-wrap gap-2">
-                                      <button onClick={() => handleRegenerateSummary()} className="px-3 py-1.5 rounded-lg bg-white text-black text-xs font-bold">Retry</button>
-                                      {allowGemini && !preferAssemblySummary && (
-                                        <button onClick={() => handleRegenerateSummary(undefined, 'gemini')} className="px-3 py-1.5 rounded-lg bg-white/10 text-xs font-bold">Send to Gemini instead</button>
-                                      )}
-                                    </div>
-                                  </div>
-                                )}
+                                {renderReviewBar(selectedRecording)}
+                                {renderSummaryProblems(selectedRecording.id)}
                                 <ReportBody
                                   markdown={selectedRecording.summary}
                                   filter={summaryFilter}
@@ -2358,7 +2584,8 @@ function AppContent() {
                               <div className="text-center py-20 border-2 border-dashed border-white/5 rounded-3xl p-8 space-y-4">
                                 <FileText size={48} className="mx-auto text-white/20" />
                                 <p className="text-sm text-white/60">No summary generated for this recording yet</p>
-                                {reportError && <p className="text-xs text-red-300 max-w-md mx-auto">{reportError}</p>}
+                                {selectedRecording.has_transcript && <div className="flex justify-center"><EngineBadge provider={effectiveProvider} /></div>}
+                                <div className="text-left max-w-xl mx-auto">{renderSummaryProblems(selectedRecording.id)}</div>
                                 {selectedRecording.has_transcript ? (
                                   <button 
                                     onClick={triggerRegeneratePrompt}
@@ -2477,7 +2704,7 @@ function AppContent() {
                           meta={timelineMeta}
                           truncated={timelineMeta?.truncated}
                           continuing={isGeneratingTimeline}
-                          onContinue={() => handleGenerateTimeline('gateway')}
+                          onContinue={() => handleGenerateTimeline()}
                         />
                       ) : (
                         <div className="flex flex-col items-center justify-center py-20 border-2 border-dashed border-white/5 rounded-3xl text-center p-6 bg-[#16191E]/10">
@@ -2495,7 +2722,7 @@ function AppContent() {
                             <div className="space-y-3">
                               {timelineError && <p className="text-xs text-red-300 max-w-md">{timelineError}</p>}
                               <button
-                                onClick={() => handleGenerateTimeline('gateway')}
+                                onClick={() => handleGenerateTimeline()}
                                 className="px-6 py-3 bg-orange-500 hover:bg-orange-600 rounded-xl font-bold text-sm transition-all flex items-center gap-2 text-white shadow-lg shadow-orange-500/10 mx-auto"
                               >
                                 <Sparkles size={16} />

@@ -27,6 +27,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const require = createRequire(import.meta.url);
 const appVersion = require('./package.json').version;
+const { buildPdfOptions } = require('./electron/pdfOptions.cjs');
 
 // Keep the existing database and settings in %APPDATA%\react-example even though
 // productName is "Narrative AI".
@@ -415,18 +416,7 @@ function registerIpc() {
     try {
       fs.writeFileSync(tmp, payload?.html || '', 'utf8');
       await win.loadFile(tmp);
-      const pdf = await win.webContents.printToPDF({
-        printBackground: true,
-        pageSize: 'Letter',
-        displayHeaderFooter: true,
-        headerTemplate: `<div style="font-size:8px;width:100%;padding:0 0.5in;font-family:Arial,sans-serif;">${escapeHtml(payload?.headerText || '')}</div>`,
-        footerTemplate: `<div style="font-size:8px;width:100%;padding:0 0.45in;color:#333;font-family:Arial,sans-serif;">
-          <div style="font-style:italic;">${escapeHtml(payload?.footerNote || '')}</div>
-          <div>${escapeHtml(payload?.auditLine || '')}</div>
-          <div style="text-align:right;">Page <span class="pageNumber"></span> of <span class="totalPages"></span></div>
-        </div>`,
-        margins: { top: 0.7, bottom: 0.9, left: 0.6, right: 0.6 },
-      });
+      const pdf = await win.webContents.printToPDF(buildPdfOptions(payload?.footer));
       const { canceled, filePath } = await dialog.showSaveDialog({
         defaultPath: payload?.defaultFilename || 'Narrative-AI-report.pdf',
         filters: [{ name: 'PDF', extensions: ['pdf'] }],

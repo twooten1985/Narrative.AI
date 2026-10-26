@@ -28,6 +28,8 @@
     "node_modules",
     "dist",
     "dist-electron",
-    "server.cjs"
+    "server.cjs",
+    "_backup_6.1.5"
   ]
 }
+

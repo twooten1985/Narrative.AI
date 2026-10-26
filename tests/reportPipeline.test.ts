@@ -77,7 +77,8 @@ describe("generateInvestigativeReport", () => {
     let round = 0;
     const chat: ChatFn = async (args) => {
       round += 1;
-      assert.equal(args.maxTokens, 16000);
+      // 6.1.6 sizes max_tokens to the call instead of always asking for 16,000.
+      assert.ok(args.maxTokens >= 3000 && args.maxTokens < 16000, `max_tokens ${args.maxTokens}`);
       if (round === 1) {
         return { content: CLEAN, model: "claude-sonnet-4-6", requestId: "req_cut", finishReason: "length" };
       }
@@ -103,7 +104,8 @@ describe("generateInvestigativeReport", () => {
 
   it("asks gpt-oss for a larger token budget because reasoning shares max_tokens", async () => {
     const chat: ChatFn = async (args) => {
-      assert.equal(args.maxTokens, 32000);
+      // gpt-oss counts hidden reasoning against max_tokens, so it gets about double a Claude call.
+      assert.ok(args.maxTokens >= 6000 && args.maxTokens <= 32000, `max_tokens ${args.maxTokens}`);
       return { content: CLEAN, model: "gpt-oss-120b", requestId: "req_oss", finishReason: "stop" };
     };
     const result = await generateInvestigativeReport({

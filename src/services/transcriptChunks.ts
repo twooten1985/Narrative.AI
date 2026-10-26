@@ -1,4 +1,4 @@
-import { DEFAULT_CHUNK_TOKEN_LIMIT, PER_CHUNK_TOKEN_CAP, TARGET_CHUNK_MS } from "./config";
+import { CHUNK_CAP_RATIO, DEFAULT_CHUNK_TOKEN_LIMIT, MIN_CHUNK_TOKEN_LIMIT, TARGET_CHUNK_MS } from "./config";
 import { hhmmss, transcriptLines, type TranscriptLine } from "./reportPrompts";
 
 export function estimateTokens(text: string): number {
@@ -17,7 +17,7 @@ export interface TranscriptChunk {
 }
 
 export interface ChunkOptions {
-  /** Split only when the whole transcript is over this many tokens. Default 100_000. */
+  /** Split only when the whole transcript is over this many tokens. Default 50_000 (100_000 before 6.1.6). */
   tokenLimit?: number;
   /** Target length of each block once splitting starts. Default 25 minutes. */
   targetBlockMs?: number;
@@ -50,7 +50,7 @@ export function chunkTranscriptLines(lines: TranscriptLine[], opts: ChunkOptions
   if (lines.length === 0) return [];
   const tokenLimit = opts.tokenLimit ?? DEFAULT_CHUNK_TOKEN_LIMIT;
   const targetBlockMs = opts.targetBlockMs ?? TARGET_CHUNK_MS;
-  const perChunkTokenCap = opts.perChunkTokenCap ?? Math.min(PER_CHUNK_TOKEN_CAP, tokenLimit);
+  const perChunkTokenCap = opts.perChunkTokenCap ?? Math.max(MIN_CHUNK_TOKEN_LIMIT, Math.round(tokenLimit * CHUNK_CAP_RATIO));
 
   const full = lines.map((l) => l.line).join("\n");
   const span = (lines[lines.length - 1]?.end ?? 0) - (lines[0]?.start ?? 0);

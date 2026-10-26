@@ -11,6 +11,11 @@ export interface AuditFields {
   aiAcknowledgedAt?: string | null;
   /** Local-time sentence captured with the report. Re-export uses this, not a later session. */
   aiAcknowledgedLabel?: string | null;
+  service?: string | null;
+  sourceSha256?: string | null;
+  sourceHashAt?: string | null;
+  machineGenerated?: boolean;
+  appVersion?: string | null;
 }
 
 export function formatGeneratedAt(value?: string | null): string {

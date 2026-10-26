@@ -14,7 +14,8 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { format } from 'date-fns';
 import { apiFetch } from '../services/apiClient';
-import { deleteRemoteTranscript, generateReportOnServer, releaseTranscriptJob, searchKeywords, transcribeOnServer } from '../services/reportClient';
+import { cancelReportJob, deleteRemoteTranscript, generateReportOnServer, isReportJobError, releaseTranscriptJob, searchKeywords, transcribeOnServer, type ReportErrorInfo, type RetryState } from '../services/reportClient';
+import { EngineBadge, RetryBanner, SummaryErrorPanel, type SummaryProviderSetting } from './SummaryStatus';
 import { pollWithBackoff } from '../services/polling';
 import { mapPool } from '../services/concurrency';
 import { getElectron } from '../electron-bridge';
@@ -28,6 +29,9 @@ interface MassProcessingViewProps {
   gatewayModel?: string;
   hasAssemblyKey?: boolean;
   hasGeminiKey?: boolean;
+  /** Where summaries go. Only an explicit button press sends a file anywhere else. */
+  summaryProvider?: SummaryProviderSetting;
+  hasLocalModel?: boolean;
   massConcurrency?: number;
   jailCallQueue?: boolean;
   jailCallTranscribe?: boolean;
@@ -43,11 +47,18 @@ interface ProcessedFile {
   name: string;
   file?: File;
   path?: string;
-  status: 'pending' | 'uploading' | 'converting' | 'transcribing' | 'summarizing' | 'completed' | 'error';
+  status: 'pending' | 'uploading' | 'converting' | 'transcribing' | 'summarizing' | 'retrying' | 'completed' | 'error';
   progress: number;
   message?: string;
   serverFilename?: string;
   serverReady?: boolean;
+  /** Kept after a failed summary so Retry resumes at the summary and never transcribes again. */
+  transcribeJobId?: string;
+  transcriptId?: string | null;
+  reportJobId?: string;
+  retry?: RetryState | null;
+  errorInfo?: ReportErrorInfo | null;
+  partial?: { saved: number; total: number } | null;
   error?: string;
   summary?: string;
   reportMeta?: AuditFields | null;
@@ -70,6 +81,8 @@ export const MassProcessingView: React.FC<MassProcessingViewProps> = ({
   gatewayModel,
   hasAssemblyKey,
   hasGeminiKey,
+  summaryProvider = 'gateway',
+  hasLocalModel,
   massConcurrency = 2,
   jailCallTranscribe = true,
   jailCallSummarize = true,
@@ -119,8 +132,26 @@ export const MassProcessingView: React.FC<MassProcessingViewProps> = ({
     setFiles(prev => prev.map(f => (f.id === id ? { ...f, ...patch } : f)));
   };
 
-  const processOne = async (fileObj: ProcessedFile, engine: 'gateway' | 'gemini') => {
+  const STATUS_WORDS: Record<ProcessedFile['status'], string> = {
+    pending: 'queued',
+    uploading: 'uploading',
+    converting: 'converting',
+    transcribing: 'transcribing',
+    summarizing: 'summarizing',
+    retrying: 'retrying',
+    completed: 'completed',
+    error: 'failed',
+  };
+
+  const stopFile = async (file: ProcessedFile) => {
+    if (!file.reportJobId) return;
+    try { await cancelReportJob(file.reportJobId); } catch (e) { console.warn('Cancel failed.', e); }
+  };
+
+  const processOne = async (fileObj: ProcessedFile, engine?: 'gemini' | 'local') => {
     const keywordsList = keywords.split(',').map(k => k.trim()).filter(Boolean);
+    // A saved transcript from an earlier try. Retry then resumes at the summary and never transcribes twice.
+    const resumeJobId = mode === 'mass-jail-call' && jailCallSummarize ? fileObj.transcribeJobId : undefined;
     patchFile(fileObj.id, { status: 'uploading', progress: 8, error: undefined, message: 'Uploading to this computer…' });
 
     let uploadData: any;
@@ -176,7 +207,9 @@ export const MassProcessingView: React.FC<MassProcessingViewProps> = ({
     const shouldTranscribe = mode === 'mass-jail-call' ? jailCallTranscribe : keywordTranscribe;
     let transcriptData: any = { text: 'Transcription skipped.', words: [] as any[], utterances: [] as any[] };
 
-    if (shouldTranscribe) {
+    if (shouldTranscribe && resumeJobId) {
+      transcriptData = { id: fileObj.transcriptId, jobId: resumeJobId };
+    } else if (shouldTranscribe) {
       if (!hasAssemblyKey) throw new Error('Add an AssemblyAI API key in Settings.');
       if (engine === 'gemini' && (!allowGemini || preferAssemblySummary)) {
         throw new Error('Google Gemini is turned off, so this recording was not sent to Google.');
@@ -197,21 +230,39 @@ export const MassProcessingView: React.FC<MassProcessingViewProps> = ({
         },
       });
       transcriptData = { id: transcribed.transcriptId, jobId: transcribed.jobId };
+      if (mode === 'mass-jail-call') {
+        fileObj.transcribeJobId = transcribed.jobId;
+        fileObj.transcriptId = transcribed.transcriptId;
+        patchFile(fileObj.id, { transcribeJobId: transcribed.jobId, transcriptId: transcribed.transcriptId });
+      }
     }
 
     if (mode === 'mass-jail-call') {
-      if (jailCallSummarize && shouldTranscribe) {
-        patchFile(fileObj.id, { status: 'summarizing', progress: 88, message: engine === 'gemini' ? 'Writing the report with Gemini…' : 'Writing the report…' });
+      if (jailCallSummarize && shouldTranscribe && (summaryProvider !== 'off' || engine)) {
+        patchFile(fileObj.id, {
+          status: 'summarizing',
+          progress: 88,
+          retry: null,
+          message: engine === 'gemini' ? 'Writing the report with Gemini...' : engine === 'local' || summaryProvider === 'local' ? 'Writing the report on this PC...' : 'Writing the report...',
+        });
         const result = await generateReportOnServer({
           transcriptJobId: transcriptData.jobId,
           reportType: 'Jail Phone Calls',
           caseInfo: { recordingName: fileObj.name, reportType: 'Jail Phone Calls' },
           model: gatewayModel,
           engine,
+          useLocalModel: engine === 'local',
           strictlyAssembly: preferAssemblySummary,
           aiAcknowledgedAt,
-          onProgress: (message) => patchFile(fileObj.id, { status: 'summarizing', message }),
+          onJobStarted: (id) => patchFile(fileObj.id, { reportJobId: id }),
+          onRetry: (retry) => patchFile(fileObj.id, retry
+            ? { status: 'retrying', retry, message: retry.message }
+            : { status: 'summarizing', retry: null }),
+          onProgress: (message) => setFiles(prev => prev.map(f => (f.id === fileObj.id && f.status !== 'retrying'
+            ? { ...f, status: 'summarizing', message }
+            : f))),
         });
+        fileObj.transcribeJobId = undefined;
         const meta: AuditFields = {
           model: result.model,
           requestId: result.requestId,
@@ -219,6 +270,9 @@ export const MassProcessingView: React.FC<MassProcessingViewProps> = ({
           generatedAt: result.generatedAt,
           aiAcknowledgedAt: result.aiAcknowledgedAt,
           aiAcknowledgedLabel: result.aiAcknowledgedLabel,
+          service: result.service || null,
+          sourceSha256: result.sourceSha256 || null,
+          machineGenerated: true,
         };
         let deletionNote = '';
         if (transcriptData?.id && !String(transcriptData.id).startsWith('local-whisper')) {
@@ -241,6 +295,11 @@ export const MassProcessingView: React.FC<MassProcessingViewProps> = ({
           reportMeta: meta,
           truncated: result.truncated,
           deletionNote,
+          error: undefined,
+          errorInfo: null,
+          partial: null,
+          retry: null,
+          transcribeJobId: undefined,
         });
       } else {
         if (transcriptData?.jobId) await releaseTranscriptJob(transcriptData.jobId);
@@ -279,7 +338,10 @@ export const MassProcessingView: React.FC<MassProcessingViewProps> = ({
     });
   };
 
-  const processFiles = async (onlyId?: string, engine: 'gateway' | 'gemini' = 'gateway') => {
+  // engine is empty unless a person pressed "Use local model" or "Send to Gemini instead" for that file.
+  // Nothing is ever switched on its own.
+  const processFiles = async (onlyIds?: string | string[], engine?: 'gemini' | 'local') => {
+    const wanted = onlyIds === undefined ? null : new Set(Array.isArray(onlyIds) ? onlyIds : [onlyIds]);
     if (!hasAssemblyKey && (mode === 'mass-keyword-search' ? keywordTranscribe : jailCallTranscribe)) {
       alert('Add an AssemblyAI API key in Settings.');
       return;
@@ -294,17 +356,35 @@ export const MassProcessingView: React.FC<MassProcessingViewProps> = ({
     }
 
     setIsProcessing(true);
-    const snapshot = files.filter(file => (onlyId ? file.id === onlyId : file.status !== 'completed'));
+    const snapshot = files.filter(file => (wanted ? wanted.has(file.id) : file.status !== 'completed'));
     const limit = Math.max(1, Math.min(4, massConcurrency || 2));
     await mapPool(snapshot, limit, async (fileObj) => {
       try {
         await processOne(fileObj, engine);
       } catch (error: any) {
+        const info = isReportJobError(error) ? error.info : null;
+        const partial = isReportJobError(error) ? error.partial : null;
         const message = error?.message || 'Processing failed';
-        const geminiHint = engine === 'gateway' && allowGemini && !preferAssemblySummary
-          ? ' AssemblyAI failed. Gemini was not used. You can retry, or send this file to Gemini if your policy allows it.'
-          : '';
-        patchFile(fileObj.id, { status: 'error', progress: 100, error: `${message}${geminiHint}`, message: 'Failed' });
+        if (/no longer (in memory|available)/i.test(message)) {
+          fileObj.transcribeJobId = undefined;
+        }
+        const note = engine === 'gemini'
+          ? ''
+          : info
+            ? ''
+            : fileObj.transcribeJobId
+              ? ' The transcript is saved. Press Retry to continue at the summary.'
+              : '';
+        patchFile(fileObj.id, {
+          status: 'error',
+          progress: 100,
+          error: `${message}${note}`,
+          errorInfo: info,
+          partial,
+          retry: null,
+          message: 'Failed',
+          transcribeJobId: fileObj.transcribeJobId,
+        });
       } finally {
         if (fileObj.serverReady) fileObj.file = undefined;
       }
@@ -312,6 +392,7 @@ export const MassProcessingView: React.FC<MassProcessingViewProps> = ({
     setIsProcessing(false);
   };
 
+  const failedIds = files.filter(f => f.status === 'error').map(f => f.id);
   const exportResults = () => {
     const content = files.map(f => {
       let res = `File: ${f.name}\nStatus: ${f.status}\n`;
@@ -345,7 +426,7 @@ export const MassProcessingView: React.FC<MassProcessingViewProps> = ({
             </h2>
             <p className="text-white/40 mt-1">
               {mode === 'mass-jail-call'
-                ? 'Upload jail calls. Each file is transcribed with two speakers and summarized on the AssemblyAI gateway.'
+                ? 'Upload jail calls. Each file is transcribed with two speakers and summarized by the service chosen in Settings (shown by the badge below).'
                 : 'Search for specific terms across multiple recordings. Audio stays on this computer until AssemblyAI transcribes it.'}
             </p>
           </div>
@@ -394,7 +475,10 @@ export const MassProcessingView: React.FC<MassProcessingViewProps> = ({
         {files.length > 0 && (
           <div className="space-y-4">
             <div className="flex items-center justify-between">
-              <h3 className="text-sm font-bold uppercase tracking-widest text-white/40">Queue ({files.length})</h3>
+              <div className="flex items-center gap-3">
+                <h3 className="text-sm font-bold uppercase tracking-widest text-white/40">Queue ({files.length})</h3>
+                {mode === 'mass-jail-call' && jailCallSummarize && <EngineBadge provider={summaryProvider} />}
+              </div>
               <button
                 onClick={() => processFiles()}
                 disabled={isProcessing}
@@ -403,6 +487,17 @@ export const MassProcessingView: React.FC<MassProcessingViewProps> = ({
                 {isProcessing ? <Loader2 className="animate-spin" size={18} /> : <CheckCircle2 size={18} />}
                 {isProcessing ? 'Processing...' : 'Start Processing'}
               </button>
+              {failedIds.length > 0 && (
+                <button
+                  onClick={() => processFiles(failedIds)}
+                  disabled={isProcessing}
+                  data-testid="retry-failed"
+                  className="px-4 py-2 bg-white text-black disabled:opacity-50 rounded-xl font-bold text-sm transition-all flex items-center gap-2"
+                  title="Retries only the files that failed. Finished files are not touched."
+                >
+                  <RotateCcw size={16} /> Retry failed files ({failedIds.length})
+                </button>
+              )}
             </div>
 
             <div className="grid gap-4">
@@ -424,9 +519,10 @@ export const MassProcessingView: React.FC<MassProcessingViewProps> = ({
                           <span className={`text-[10px] font-bold uppercase tracking-widest
                             ${file.status === 'completed' ? 'text-green-500' :
                               file.status === 'error' ? 'text-red-500' :
-                              file.status === 'pending' ? 'text-white/30' : 'text-orange-500'}`}
+                              file.status === 'pending' ? 'text-white/30' :
+                              file.status === 'retrying' ? 'text-yellow-400' : 'text-orange-500'}`}
                           >
-                            {file.status}
+                            {STATUS_WORDS[file.status]}
                           </span>
                           {file.message && file.status !== 'pending' && (
                             <span className="text-[11px] text-white/40 truncate">{file.message}</span>
@@ -437,6 +533,12 @@ export const MassProcessingView: React.FC<MassProcessingViewProps> = ({
                         </div>
                       </div>
                     </div>
+
+                    {file.status === 'retrying' && (
+                      <div className="mt-3">
+                        <RetryBanner retry={file.retry || null} onCancel={file.reportJobId ? () => stopFile(file) : undefined} />
+                      </div>
+                    )}
 
                     {file.status !== 'pending' && (
                       <div className="mt-4 h-1 bg-white/5 rounded-full overflow-hidden">
@@ -461,7 +563,7 @@ export const MassProcessingView: React.FC<MassProcessingViewProps> = ({
                               meta={file.reportMeta}
                               truncated={file.truncated}
                               continuing={isProcessing}
-                              onContinue={() => processFiles(file.id, 'gateway')}
+                              onContinue={() => processFiles(file.id)}
                             />
                           ) : (
                             <pre className="text-sm text-white/70 whitespace-pre-wrap font-sans">{file.summary}</pre>
@@ -488,32 +590,24 @@ export const MassProcessingView: React.FC<MassProcessingViewProps> = ({
                     )}
 
                     {file.status === 'error' && (
-                      <div className="mt-4 p-3 bg-red-500/10 border border-red-500/20 rounded-xl space-y-3">
-                        <div className="flex items-start gap-3">
-                          <AlertCircle size={16} className="text-red-500 mt-0.5 shrink-0" />
-                          <p className="text-xs text-red-200">{file.error}</p>
-                        </div>
-                        <div className="flex flex-wrap gap-2">
-                          <button
-                            disabled={isProcessing}
-                            onClick={() => processFiles(file.id, 'gateway')}
-                            className="px-3 py-1.5 rounded-lg bg-white text-black text-xs font-bold inline-flex items-center gap-1"
-                          >
-                            <RotateCcw size={12} /> Retry upload
-                          </button>
-                          {allowGemini && !preferAssemblySummary && hasGeminiKey && (
-                            <button
-                              disabled={isProcessing}
-                              onClick={() => processFiles(file.id, 'gemini')}
-                              className="px-3 py-1.5 rounded-lg bg-white/10 text-xs font-bold"
-                            >
-                              Send to Gemini instead
-                            </button>
-                          )}
-                        </div>
+                      <div className="mt-4">
+                        <SummaryErrorPanel
+                          message={file.error || 'Processing failed.'}
+                          info={file.errorInfo}
+                          partial={file.partial}
+                          provider={summaryProvider}
+                          exportUrl={file.transcribeJobId ? `/api/reports/jobs/${encodeURIComponent(file.transcribeJobId)}/transcript.txt` : null}
+                          exportName={file.name}
+                          busy={isProcessing}
+                          transcriptSaved={!!file.transcribeJobId}
+                          canUseLocal={mode === 'mass-jail-call' && summaryProvider === 'gateway' && !!hasLocalModel && !!file.transcribeJobId}
+                          canUseGemini={mode === 'mass-jail-call' && !!allowGemini && !preferAssemblySummary && !!hasGeminiKey && !!file.transcribeJobId}
+                          onRetry={() => processFiles(file.id)}
+                          onUseLocal={() => processFiles(file.id, 'local')}
+                          onUseGemini={() => processFiles(file.id, 'gemini')}
+                        />
                       </div>
-                    )}
-                  </motion.div>
+                    )}                  </motion.div>
                 ))}
               </AnimatePresence>
             </div>
